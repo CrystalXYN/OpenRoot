@@ -1,0 +1,53 @@
+# Gradle files
+.gradle/
+build/
+.kotlin/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Log/OS Files
+*.log
+
+# Android Studio generated files and folders
+captures/
+.externalNativeBuild/
+.cxx/
+*.aab
+*.apk
+output-metadata.json
+
+# IntelliJ
+*.iml
+.idea/
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services (e.g. APIs or Firebase)
+google-services.json
+
+# Android Profiling
+*.hprof
+
+# Native build outputs (produced by buildNativeExploit / buildNativePageCache / buildNativeGpu /
+# buildNativePct)
+/native/**/*.o
+/native-or/*.o
+/native-or/splicehelper
+/native-gpu/**/*.o
+/native-pct/**/*.o
+/app/src/main/jniLibs/arm64-v8a/libghostlock.so
+/app/src/main/jniLibs/arm64-v8a/libopenroot.so
+/app/src/main/jniLibs/arm64-v8a/libopenbootstrap.so
+/app/src/main/jniLibs/arm64-v8a/libcheese-quest.so
+/app/src/main/jniLibs/arm64-v8a/libcheese-snapdragon.so
+/app/src/main/jniLibs/arm64-v8a/libpct-opace6.so
+
+# Editor / agent metadata (local only, not part of the project)
+.workbuddy-ai/
+.codebuddy/
