@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OpenRoot</string>
+
+    <!-- Language switch (About) -->
+    <string name="language_auto">跟随系统</string>
+    <string name="language_english">English</string>
+    <string name="language_chinese">简体中文</string>
+
+    <!-- Wireless debugging pairing -->
+    <string name="adb_pairing_channel_name">无线配对</string>
+    <string name="adb_pairing_channel_description">无线调试配对</string>
+
+    <string name="adb_pairing_searching_title">等待配对请求</string>
+    <string name="adb_pairing_searching_text">请在开发者选项中打开“使用配对码配对设备”</string>
+
+    <string name="adb_pairing_found_title">发现配对请求</string>
+    <string name="adb_pairing_found_text">点击输入 6 位配对码</string>
+    <string name="adb_pairing_code_hint">配对码</string>
+    <string name="adb_pairing_input_code">输入配对码</string>
+
+    <string name="adb_pairing_working_title">正在配对…</string>
+    <string name="adb_pairing_working_text">端口 %1$d</string>
+
+    <string name="adb_pairing_succeed_title">配对成功</string>
+    <string name="adb_pairing_succeed_text">密钥已写入 adbd</string>
+
+    <string name="adb_pairing_failed_title">配对失败</string>
+    <string name="adb_pairing_failed_code">配对码错误或已过期</string>
+    <string name="adb_pairing_failed_empty_code">未输入配对码</string>
+    <string name="adb_pairing_failed_port">无法连接配对端口，请重新打开配对弹窗</string>
+    <string name="adb_pairing_failed_tls">TLS 握手失败</string>
+    <string name="adb_pairing_failed_tls_export">无法导出 TLS 会话密钥，内置 TLS 库加载失败</string>
+
+    <string name="adb_pairing_retry">重试</string>
+    <string name="adb_pairing_stop">停止</string>
+
+    <!-- Main screen -->
+    <string name="adb_pairing_start">开始配对</string>
+    <string name="shizuku_pairing">通过 Shizuku 连接</string>
+    <string name="shizuku_connected">Shizuku 已连接</string>
+    <string name="adb_pairing_stop_button">停止配对</string>
+    <string name="adb_pairing_permission_needed">需要通知权限</string>
+
+    <!-- Already paired: connect without a code, fall back to pairing on failure -->
+    <string name="adb_connect">连接</string>
+    <string name="adb_connect_connecting">连接中…</string>
+    <string name="adb_disconnect">断开连接</string>
+    <string name="adb_connect_failed_fallback">直连失败，请使用配对码</string>
+
+    <!-- Temporary root -->
+    <string name="exploit_button">提权</string>
+    <string name="exploit_running">正在提权…</string>
+    <string name="exploit_needs_adb">请先连接 ADB</string>
+    <string name="exploit_unsupported_kernel">没有适配当前内核的配置</string>
+    <string name="exploit_finished">载荷执行结束</string>
+    <string name="exploit_exit_code">载荷退出码 %1$d</string>
+    <string name="exploit_ksu_loaded">已获得临时 root，KernelSU 模块已加载</string>
+    <string name="exploit_ksu_manual">已获得临时 root，KernelSU 模块已加载（请手动打开管理器）</string>
+    <string name="exploit_ksu_opened">已获得临时 root，正在打开 KernelSU</string>
+    <string name="engine_kernel_profile">CVE-2026-43499</string>
+    <string name="exploit_root_ready">临时 root 就绪，可在下方输入命令</string>
+    <string name="exploit_profile_gate_failed">当前版本不是载荷移植对应的版本</string>
+
+    <!-- Bottom navigation -->
+    <string name="tab_home">主页</string>
+    <string name="tab_profile">配置</string>
+    <string name="tab_log">日志</string>
+    <string name="tab_about">关于</string>
+
+    <!-- About -->
+    <string name="about_tagline_pairing">无线 ADB 配对，无需数据线和电脑。</string>
+    <string name="about_tagline_root">在受支持的内核上运行临时 root 载荷。</string>
+    <string name="about_contributors">贡献者</string>
+    <string name="about_open_github">在 GitHub 上查看</string>
+    <string name="about_update_cd">下载更新</string>
+    <string name="about_disclaimer">请仅在你自己拥有的设备上使用。</string>
+
+    <!-- 状态卡片 -->
+    <string name="support_supported">已支持</string>
+    <string name="support_untested">未验证</string>
+    <string name="support_unsupported">不支持</string>
+    <string name="support_not_connected">未连接</string>
+    <string name="support_checking">检测中</string>
+    <string name="support_no_adbd">尚未建立 adbd 会话</string>
+    <string name="support_reading_device">正在读取设备</string>
+    <string name="support_unknown_kernel">未知内核</string>
+    <string name="support_engine">引擎：%1$s</string>
+    <string name="support_payload_ready">载荷已就绪</string>
+    <string name="support_engine_unverified">引擎：%1$s - 尚未验证</string>
+    <string name="support_unverified">尚未验证</string>
+    <string name="support_engine_no_root">引擎：%1$s - 上次运行未成功提权</string>
+    <string name="support_no_payload">没有适配此内核的载荷</string>
+    <string name="support_connect_to_check">连接后检测设备支持情况</string>
+    <string name="support_looking_for_engine">正在匹配可用引擎</string>
+
+    <!-- 连接状态 -->
+    <string name="status_connecting">连接中…</string>
+    <string name="status_shizuku">已通过 Shizuku 连接</string>
+    <string name="status_connected">已连接</string>
+    <string name="status_waiting_adbd">等待 adbd</string>
+    <string name="status_not_paired">未配对</string>
+
+    <!-- 漏洞选择 -->
+    <string name="picker_select_vulnerability">选择漏洞</string>
+    <string name="picker_run">执行</string>
+    <string name="picker_unavailable">不可用</string>
+    <string name="common_cancel">取消</string>
+
+    <!-- 日志卡片 -->
+    <string name="log_title">提权日志</string>
+    <string name="log_command_hint">以 root 身份执行命令</string>
+    <string name="log_command_run">执行</string>
+    <string name="exploit_log_open">打开提权日志</string>
+    <string name="exploit_log_running">正在提权 - 打开日志</string>
+
+    <!-- KASLR 卡片 -->
+    <string name="kaslr_title">KASLR 偏移</string>
+    <string name="kaslr_resolving">解析中…</string>
+    <string name="kaslr_get">获取偏移</string>
+    <string name="kaslr_manual_close">手动 · 收起</string>
+    <string name="kaslr_manual">手动</string>
+    <string name="kaslr_hex_hint">0x…</string>
+    <string name="kaslr_set">设置</string>
+
+    <!-- 设备信息 -->
+    <string name="info_device">设备</string>
+    <string name="info_android">Android</string>
+    <string name="info_kernel">内核</string>
+
+    <!-- 配置选择 -->
+    <string name="profile_picker_title">选择配置</string>
+    <string name="profile_picker_empty">此 APK 中没有可用配置，请先解析 boot.img。</string>
+
+    <!-- Shizuku 状态 -->
+    <string name="shizuku_no_access">尚未获得 shell 权限</string>
+    <string name="shizuku_tap_retry"> · 点击重试</string>
+    <string name="shizuku_waiting">正在等待 Shizuku 授权…</string>
+    <string name="shizuku_denied">Shizuku 权限被拒绝</string>
+    <string name="shizuku_not_running_using_adb">Shizuku 未运行 - 改用 ADB</string>
+    <string name="shizuku_needs_v11">需要 Shizuku 11 或更高版本</string>
+    <string name="shizuku_access_denied">Shizuku 访问被拒绝 - 请在 Shizuku 应用列表中开启</string>
+    <string name="shizuku_access_not_granted">尚未授予 Shizuku 权限 - 点击“通过 Shizuku 连接”</string>
+    <string name="shizuku_checking">正在检查 Shizuku…</string>
+    <string name="shizuku_not_installed">未安装 Shizuku / Shevery</string>
+    <string name="shizuku_start_shevery">请先启动 Shevery 服务，然后重试</string>
+    <string name="shizuku_start_service">请先启动 Shizuku 服务，然后重试</string>
+    <string name="shizuku_request_failed">正在等待 Shizuku 授权…（请求失败：%1$s）</string>
+    <string name="shizuku_cannot_open">无法打开 Shizuku</string>
+
+    <!-- Root 交接 -->
+    <string name="handoff_root_channel">root 命令通道</string>
+    <string name="handoff_starts">将启动 %1$s</string>
+
+    <!-- 漏洞行 -->
+    <string name="engine_using_profile">使用 %1$s 的配置</string>
+    <string name="engine_kernel_profile_for">%1$s 的内核配置</string>
+    <string name="engine_connect_first">请先连接 ADB</string>
+    <string name="engine_payload_missing">此 ABI 未打包对应载荷</string>
+    <string name="engine_open_profile">打开配置</string>
+    <string name="engine_kernel_old">内核版本低于 5.7</string>
+    <string name="engine_parse_first">请先在配置页解析此内核的 boot.img</string>
+    <string name="engine_c98260_detail">POSIX 定时器竞争，最多 24 轮，%1$s</string>
+    <!-- 98260 行上的次级动作：同一载荷，但是在改写 cred 前停止 -->
+    <string name="engine_only_selinux">仅关 SELinux</string>
+    <string name="engine_c98260_selinux_detail">将 SELinux 设为宽容模式，在改写 cred 前停止</string>
+    <string name="engine_no_port">没有适配此机型的移植版本</string>
+    <string name="engine_pct_detail">竞争利用，最多 32 次尝试，SELinux 保持关闭，%1$s</string>
+    <string name="engine_gpu_unsupported">不支持此 GPU</string>
+    <string name="engine_gpu_detail">SELinux 保持关闭，%1$s</string>
+    <string name="engine_not_covered">模块镜像未覆盖此内核</string>
+
+    <!-- 提示 -->
+    <string name="offsets_exported">偏移已导出</string>
+    <string name="export_failed">导出失败：%1$s</string>
+    <string name="offsets_imported">偏移已导入并启用</string>
+    <string name="import_refused">导入被拒绝：%1$s</string>
+    <string name="import_failed">导入失败：%1$s</string>
+
+    <!-- JokerLock 引擎 -->
+    <string name="engine_joker_detail">KernelSnitch 竞争，oplus GKI 构建，%1$s</string>
+
+    <!-- Shark 移植 -->
+    <string name="engine_built_for">仅支持 %1$s；当前内核为 %2$s</string>
+    <string name="engine_shark_driver">运行内置驱动脚本，%1$s</string>
+
+    <!-- 首次启动 -->
+    <string name="consent_step">第 %1$d 步，共 2 步</string>
+    <string name="consent_doc1">文件 1/2 · 本软件许可证</string>
+    <string name="consent_doc2">文件 2/2 · 临时 root 对设备意味着什么</string>
+    <string name="consent_bundled">已随本版本打包，请完整阅读。</string>
+    <string name="consent_fetching">正在从两个镜像获取许可证文本…</string>
+    <string name="consent_source">文本来源：%1$s</string>
+    <string name="common_back">返回</string>
+    <string name="consent_continue">继续</string>
+    <string name="consent_accept">接受并继续</string>
+    <string name="consent_accept_gpl">我已阅读并接受 GNU 通用公共许可证 v3.0</string>
+    <string name="consent_accept_disclaimer">我已阅读并接受临时 root 免责声明</string>
+    <string name="consent_licence_required">必须接受许可证后才能进入下一份文件。</string>
+    <string name="consent_stored_local">接受状态仅保存在本机。</string>
+
+    <!-- 配置页 -->
+    <string name="profile_section_tables">内置偏移表</string>
+    <string name="profile_choose_builtin">选择内置配置</string>
+    <string name="profile_selected">已选择：%1$s</string>
+    <string name="profile_section_boot">Boot 镜像</string>
+    <string name="profile_parsing">解析中…</string>
+    <string name="profile_select_boot">选择 boot.img 或 OTA 包</string>
+    <string name="profile_select_mtk">boot.img +（可附加 vendor_boot.img）</string>
+    <string name="profile_export">导出偏移</string>
+    <string name="profile_import">导入偏移</string>
+    <string name="common_save">保存</string>
+    <string name="common_discard">放弃</string>
+    <string name="profile_section_parsed">本机解析结果</string>
+    <string name="profile_parsed_empty">暂无记录。解析 boot.img 或 OTA 包后会显示在这里。</string>
+    <string name="profile_hide_offsets">隐藏偏移</string>
+    <string name="profile_show_offsets">显示偏移</string>
+    <string name="profile_selected_badge">已选择</string>
+    <string name="profile_tap_select">点击选择</string>
+    <string name="common_delete">删除</string>
+    <string name="profile_parse">解析</string>
+    <string name="profile_tables_note">APK 内置的偏移表。可以任选一张来替代按本机内核自动匹配的结果；Run 用的就是你选的那张。</string>
+    <string name="profile_parse_note">结构体偏移取自 BTF，符号地址取自 kallsyms；运行参数沿用最接近的内置配置。OTA zip 或 payload.bin 可直接使用：boot 分区就地抽取，不必解开整个包。MTK 机型：boot.img +（可以附加 vendor_boot.img），内核在哪个文件里就从哪个文件取。</string>
+    <string name="profile_ota_note">也可以粘贴 OTA 链接：完整 OTA zip、payload.bin 或 boot.img 均可。只下载解析所需的字节区间，服务器必须支持 HTTP Range；增量 OTA 会被拒绝。请使用 https:// —— Android 9 及以上禁止明文 HTTP。</string>
+    <string name="profile_portable_note">偏移可以移植：把解析结果导出为 JSON，或直接导入而无需重读 boot 镜像。文件中记录了每个字段的来源；携带借用绝对地址的文件会被拒绝。</string>
+    <string name="profile_reading">正在读取 %1$s…</string>
+    <string name="profile_verify_note">偏移错误的配置只会让运行失败，不会拿到 root。新配置在成功跑通一次之前都应视为未验证。</string>
+    <string name="profile_kernel_mismatch">本机内核为 %1$s；该配置只适用于它自己的版本。</string>
+    <string name="profile_fields">从镜像读取 %1$d 个字段，%2$d 个来自 %3$s</string>
+    <string name="profile_missing">缺少：%1$s</string>
+    <string name="profile_picker_note">来自本机解析结果或 OpenRoot 内置偏移表。会原样交给 CVE-2026-43499：其他版本生成的配置偏移不对，可能直接让内核出错。</string>
+    <string name="profile_picker_this_kernel">当前内核</string>
+    <string name="profile_badge_bundled">内置</string>
+    <string name="profile_saved">配置已保存</string>
+    <string name="profile_from">来自 %1$s</string>
+
+    <!-- GhostLock54（OPPO Reno7 5G 移植） -->
+    <string name="engine_ghost54_detail">加载为此内核预编译的 kernelsu.ko，%1$s</string>
+
+    <!-- CVE-2020-0041 binder 越界写 -->
+    <string name="engine_0041_ready">%1$s，%2$s</string>
+    <string name="engine_0041_no_profile">没有适配 %1$s 的 binder 配置（仅支持 5.4 与 5.4-qgki）</string>
+
+    <!-- Magisk 管理器交接 -->
+    <string name="exploit_magisk">Magisk 已就绪，正在安装管理器</string>
+    <string name="exploit_magisk_legacy">Magisk 20.4 已在 /sbin 生效，正在安装旧版管理器（v8.0.4）</string>
+    <string name="engine_mtk_title">CVE-2019-2215（MTK EasySU）</string>
+    <string name="engine_mtk_not_mtk">不是联发科设备（%1$s）</string>
+    <string name="engine_mtk_no_cmdq">shell 无法访问联发科命令队列设备</string>
+    <string name="engine_mtk_patched">补丁级别 %1$s：mtk-su 大概率已修复，运行很可能失败</string>
+    <string name="engine_mtk_detail">mtk-su + Magisk 20.4 写入 /sbin，引导保持锁定，%1$s</string>
+    <string name="engine_mtk_failed">载荷未创建 /sbin/su</string>
+
+    <!-- CVE-2024-31317 zygote 注入（前置条件） -->
+    <string name="engine_zygote_title">CVE-2024-31317（zygote 注入，仅 system）</string>
+    <string name="zygote_ready">处于受影响范围；注入后可以 system 身份执行代码（已读取 %1$d 个补丁属性）</string>
+    <string name="zygote_ran">载荷已生效：代码现在以 system 身份运行。重启后失效</string>
+    <string name="zygote_injecting">正在写入 zygote 参数载荷</string>
+    <string name="zygote_failed">注入的载荷没有写出标记文件</string>
+    <string name="zygote_restored">设置键已恢复，设备回到原始状态</string>
+
+    <!-- LSPromise：49881 + 43284 -->
+    <string name="engine_lspromise_title">LSPromise（CVE-2026-49881 + CVE-2026-43284）</string>
+    <string name="lspromise_not_staged">载荷未能推送，请查看日志</string>
+    <string name="lspromise_reached">xfrm 套接字可达，可以继续写入</string>
+    <string name="lspromise_stopped">shelld 已启动，链路在此中断：%1$s</string>
+</resources>

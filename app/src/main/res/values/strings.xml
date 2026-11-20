@@ -1,6 +1,11 @@
 <resources>
     <string name="app_name">OpenRoot</string>
 
+    <!-- Language switch (About) -->
+    <string name="language_auto">Auto</string>
+    <string name="language_english">English</string>
+    <string name="language_chinese">简体中文</string>
+
     <!-- Wireless debugging pairing -->
     <string name="adb_pairing_channel_name">Wireless pairing</string>
     <string name="adb_pairing_channel_description">Wireless debugging pairing</string>
@@ -31,7 +36,7 @@
 
     <!-- Main screen -->
     <string name="adb_pairing_start">Start pairing</string>
-    <string name="shizuku_pairing">Shizuku pairing</string>
+    <string name="shizuku_pairing">Connect via Shizuku</string>
     <string name="shizuku_connected">Shizuku connected</string>
     <string name="adb_pairing_stop_button">Stop pairing</string>
     <string name="adb_pairing_permission_needed">Notification permission required</string>
@@ -61,4 +66,201 @@
     <string name="tab_profile">Profile</string>
     <string name="tab_log">Log</string>
     <string name="tab_about">About</string>
+
+    <!-- About -->
+    <string name="about_tagline_pairing">Wireless ADB pairing, no cable and no PC.</string>
+    <string name="about_tagline_root">Runs a temporary root payload on supported kernels.</string>
+    <string name="about_contributors">Contributors</string>
+    <string name="about_open_github">Open on GitHub</string>
+    <string name="about_update_cd">Download update</string>
+    <string name="about_disclaimer">Use it only on hardware you own.</string>
+
+    <!-- Status card -->
+    <string name="support_supported">Supported</string>
+    <string name="support_untested">Untested</string>
+    <string name="support_unsupported">Unsupported</string>
+    <string name="support_not_connected">Not connected</string>
+    <string name="support_checking">Checking</string>
+    <string name="support_no_adbd">No adbd session yet</string>
+    <string name="support_reading_device">Reading device</string>
+    <string name="support_unknown_kernel">Unknown kernel</string>
+    <string name="support_engine">Engine: %1$s</string>
+    <string name="support_payload_ready">Payload is ready</string>
+    <string name="support_engine_unverified">Engine: %1$s - not verified yet</string>
+    <string name="support_unverified">Not verified yet</string>
+    <string name="support_engine_no_root">Engine: %1$s - last run did not root</string>
+    <string name="support_no_payload">No payload supports this kernel</string>
+    <string name="support_connect_to_check">Connect to check device support</string>
+    <string name="support_looking_for_engine">Looking for a matching engine</string>
+
+    <!-- Connection status line -->
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_shizuku">Connected via Shizuku</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_waiting_adbd">Waiting for adbd</string>
+    <string name="status_not_paired">Not paired</string>
+
+    <!-- Engine picker -->
+    <string name="picker_select_vulnerability">Select vulnerability</string>
+    <string name="picker_run">Run</string>
+    <string name="picker_unavailable">Unavailable</string>
+    <string name="common_cancel">Cancel</string>
+
+    <!-- Log card -->
+    <string name="log_title">Exploit log</string>
+    <string name="log_command_hint">Run a command as root</string>
+    <string name="log_command_run">Run</string>
+    <string name="exploit_log_open">Open exploit log</string>
+    <string name="exploit_log_running">Exploit running - open log</string>
+
+    <!-- KASLR card -->
+    <string name="kaslr_title">KASLR slide</string>
+    <string name="kaslr_resolving">Resolving…</string>
+    <string name="kaslr_get">Get Slide</string>
+    <string name="kaslr_manual_close">Manual · close</string>
+    <string name="kaslr_manual">Manual</string>
+    <string name="kaslr_hex_hint">0x…</string>
+    <string name="kaslr_set">Set</string>
+
+    <!-- Device info -->
+    <string name="info_device">Device</string>
+    <string name="info_android">Android</string>
+    <string name="info_kernel">Kernel</string>
+
+    <!-- Profile picker -->
+    <string name="profile_picker_title">Select profile</string>
+    <string name="profile_picker_empty">No profiles are available in this APK; parse a boot.img first.</string>
+
+    <!-- Shizuku status -->
+    <string name="shizuku_no_access">No shell access yet</string>
+    <string name="shizuku_tap_retry"> · tap to retry</string>
+    <string name="shizuku_waiting">Waiting for Shizuku permission…</string>
+    <string name="shizuku_denied">Shizuku permission denied</string>
+    <string name="shizuku_not_running_using_adb">Shizuku is not running - using ADB</string>
+    <string name="shizuku_needs_v11">Shizuku 11 or newer is required</string>
+    <string name="shizuku_access_denied">Shizuku access denied - enable it in Shizuku\'s app list</string>
+    <string name="shizuku_access_not_granted">Shizuku access not granted - tap Connect via Shizuku</string>
+    <string name="shizuku_checking">Checking Shizuku…</string>
+    <string name="shizuku_not_installed">Shizuku / Shevery is not installed</string>
+    <string name="shizuku_start_shevery">Start Shevery\'s service, then tap again</string>
+    <string name="shizuku_start_service">Start the Shizuku service, then tap again</string>
+    <string name="shizuku_request_failed">Waiting for Shizuku permission… (request failed: %1$s)</string>
+    <string name="shizuku_cannot_open">Cannot open Shizuku</string>
+
+    <!-- Root handoff -->
+    <string name="handoff_root_channel">root command channel</string>
+    <string name="handoff_starts">starts %1$s</string>
+
+    <!-- Engine rows -->
+    <string name="engine_using_profile">Using profile for %1$s</string>
+    <string name="engine_kernel_profile_for">Kernel profile for %1$s</string>
+    <string name="engine_connect_first">Connect to adb first</string>
+    <string name="engine_payload_missing">Payload not packaged for this ABI</string>
+    <string name="engine_open_profile">Open Profile</string>
+    <string name="engine_kernel_old">Kernel older than 5.7</string>
+    <string name="engine_parse_first">Parse this kernel\'s boot.img in Profile first</string>
+    <string name="engine_c98260_detail">POSIX timer race, up to 24 rounds, %1$s</string>
+    <!-- Chip on the 98260 row: same payload, stops before the cred rewrite. -->
+    <string name="engine_only_selinux">Only SELinux</string>
+    <string name="engine_c98260_selinux_detail">Sets SELinux permissive, stops before cred</string>
+    <string name="engine_no_port">No ported build for this device</string>
+    <string name="engine_pct_detail">Race, up to 32 attempts, SELinux stays off, %1$s</string>
+    <string name="engine_gpu_unsupported">GPU not supported</string>
+    <string name="engine_gpu_detail">SELinux stays off, %1$s</string>
+    <string name="engine_not_covered">Kernel not covered by the module images</string>
+
+    <!-- Toasts -->
+    <string name="offsets_exported">Offsets exported</string>
+    <string name="export_failed">Export failed: %1$s</string>
+    <string name="offsets_imported">Offsets imported and activated</string>
+    <string name="import_refused">Import refused: %1$s</string>
+    <string name="import_failed">Import failed: %1$s</string>
+
+    <!-- JokerLock engine -->
+    <string name="engine_joker_detail">KernelSnitch race, oplus GKI build, %1$s</string>
+
+    <!-- Shark ports -->
+    <string name="engine_built_for">Built for %1$s; this kernel is %2$s</string>
+    <string name="engine_shark_driver">Shipped driver script, %1$s</string>
+
+    <!-- First start -->
+    <string name="consent_step">Step %1$d of 2</string>
+    <string name="consent_doc1">Document 1 of 2 · licence of this software</string>
+    <string name="consent_doc2">Document 2 of 2 · what temporary root means for your device</string>
+    <string name="consent_bundled">Bundled with this build. Read it in full.</string>
+    <string name="consent_fetching">Fetching the licence text from both mirrors…</string>
+    <string name="consent_source">Text source: %1$s</string>
+    <string name="common_back">Back</string>
+    <string name="consent_continue">Continue</string>
+    <string name="consent_accept">Accept and continue</string>
+    <string name="consent_accept_gpl">I have read and accept the GNU General Public License v3.0</string>
+    <string name="consent_accept_disclaimer">I have read and accept the temporary root disclaimer</string>
+    <string name="consent_licence_required">The licence has to be accepted before the next document.</string>
+    <string name="consent_stored_local">Accepting is stored on this device only.</string>
+
+    <!-- Profile tab -->
+    <string name="profile_section_tables">Built-in offset tables</string>
+    <string name="profile_choose_builtin">Choose a built-in profile</string>
+    <string name="profile_selected">Selected: %1$s</string>
+    <string name="profile_section_boot">Boot image</string>
+    <string name="profile_parsing">Parsing…</string>
+    <string name="profile_select_boot">Select boot.img or OTA zip</string>
+    <string name="profile_select_mtk">boot.img + (optional vendor_boot.img)</string>
+    <string name="profile_export">Export offsets</string>
+    <string name="profile_import">Import offsets</string>
+    <string name="common_save">Save</string>
+    <string name="common_discard">Discard</string>
+    <string name="profile_section_parsed">Parsed on this device</string>
+    <string name="profile_parsed_empty">Nothing yet. Parse a boot.img or an OTA to add one.</string>
+    <string name="profile_hide_offsets">Hide offsets</string>
+    <string name="profile_show_offsets">Show offsets</string>
+    <string name="profile_selected_badge">Selected</string>
+    <string name="profile_tap_select">Tap to select</string>
+    <string name="common_delete">Delete</string>
+    <string name="profile_parse">Parse</string>
+    <string name="profile_tables_note">Offset tables shipped inside the APK. Pick any of them instead of the automatic match with this device\'s kernel; the one you pick is what Run uses.</string>
+    <string name="profile_parse_note">Struct offsets come from BTF, symbol addresses from kallsyms. Run tuning is taken from the closest bundled profile. An OTA zip or payload.bin works directly: the boot partition is pulled out in place, without unpacking the whole package. MTK builds: boot.img + (vendor_boot.img may be attached); the kernel is taken from whichever file holds it.</string>
+    <string name="profile_ota_note">Or paste an OTA link: a full OTA zip, a payload.bin, or a boot.img. Only the byte ranges the parser needs are downloaded, so the server must honor HTTP Range. Delta OTAs are refused. Use https:// - cleartext HTTP is blocked on Android 9 and newer.</string>
+    <string name="profile_portable_note">Offsets are portable: export the parsed values to a JSON file, or import one without re-reading the boot image. The file records where each field came from; files carrying borrowed absolute addresses are refused.</string>
+    <string name="profile_reading">Reading %1$s…</string>
+    <string name="profile_verify_note">A profile with wrong offsets fails the run instead of gaining root. Treat a new profile as unverified until one run succeeds.</string>
+    <string name="profile_kernel_mismatch">This device reports %1$s; the profile only applies to its own release.</string>
+    <string name="profile_fields">%1$d fields read from the image, %2$d from %3$s</string>
+    <string name="profile_missing">Missing: %1$s</string>
+    <string name="profile_picker_note">Parsed on this device or one of the offset tables bundled with OpenRoot. Handed to CVE-2026-43499 as-is: a profile from another build carries the wrong offsets and may fault the kernel.</string>
+    <string name="profile_picker_this_kernel">This kernel</string>
+    <string name="profile_badge_bundled">bundled</string>
+    <string name="profile_saved">Profile saved</string>
+    <string name="profile_from">from %1$s</string>
+
+    <!-- GhostLock54 (OPPO Reno7 5G port) -->
+    <string name="engine_ghost54_detail">Insmods a prebuilt kernelsu.ko for this kernel, %1$s</string>
+
+    <!-- CVE-2020-0041 binder out-of-bounds write -->
+    <string name="engine_0041_ready">%1$s, %2$s</string>
+    <string name="engine_0041_no_profile">No binder profile for %1$s (5.4 and 5.4-qgki only)</string>
+
+    <!-- Magisk manager handoff -->
+    <string name="exploit_magisk">Magisk is live; the manager is being installed</string>
+    <string name="exploit_magisk_legacy">Magisk 20.4 is live in /sbin; installing the legacy manager (v8.0.4)</string>
+    <string name="engine_mtk_title">CVE-2019-2215 (MTK EasySU)</string>
+    <string name="engine_mtk_not_mtk">Not a MediaTek device (%1$s)</string>
+    <string name="engine_mtk_no_cmdq">The MediaTek command-queue device is not reachable from shell</string>
+    <string name="engine_mtk_patched">Patch level %1$s: mtk-su is likely fixed, the run will probably fail</string>
+    <string name="engine_mtk_detail">mtk-su + Magisk 20.4 in /sbin, bootloader stays locked, %1$s</string>
+    <string name="engine_mtk_failed">The payload did not create /sbin/su</string>
+
+    <!-- CVE-2024-31317 zygote injection (prerequisite) -->
+    <string name="engine_zygote_title">CVE-2024-31317 (zygote injection, system only)</string>
+    <string name="zygote_ready">Inside the vulnerable window; injecting runs code as system (%1$d patch properties read)</string>
+    <string name="zygote_ran">The payload took: code now runs as system. Reboot clears it</string>
+    <string name="zygote_injecting">Writing the zygote argument payload</string>
+    <string name="zygote_failed">The injected payload did not write its marker</string>
+    <string name="zygote_restored">The settings key was restored; the device is back to its original state</string>
+
+    <!-- LSPromise: 49881 + 43284 -->
+    <string name="engine_lspromise_title">LSPromise (CVE-2026-49881 + CVE-2026-43284)</string>
+    <string name="lspromise_not_staged">The payloads could not be staged; check the log</string>
+    <string name="lspromise_reached">The xfrm socket was reachable; the write can proceed</string>
+    <string name="lspromise_stopped">shelld is up, chain stopped: %1$s</string>
 </resources>

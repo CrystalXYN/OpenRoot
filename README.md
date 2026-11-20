@@ -39,9 +39,9 @@ and can run a bundled payload that grants temporary root on supported kernels.
   build props.
 - **Kernel support status.** The main screen reports whether the connected kernel has a bundled
   profile.
-- **Temporary root, five vulnerabilities.** The picker lists CVE ids, one row per bug; the build
-  that fits the connected device is selected after the row is chosen, so no row is tied to a single
-  device. On an arm64 device the app picks whichever engine can run:
+- **Temporary root, fifteen rows.** The picker lists CVE ids, one row per bug (or per port of a bug);
+  the build that fits the connected device is selected after the row is chosen, so no row is tied
+  to a single device. On an arm64 device the app picks whichever engine can run:
   - **CVE-2026-43499** (futex PI UAF): the payload and a profile matching the exact `uname -r` are
     pushed to `/data/local/tmp/openroot` and executed as the `shell` user.
   - **CVE-2026-64560** (posix-cpu-timers UAF on non-leader `exec()`): the freed `k_itimer` is turned
@@ -59,6 +59,30 @@ and can run a bundled payload that grants temporary root on supported kernels.
   - **CVE-2026-43284** (page cache write primitive): loads a small kernel module. It needs no
     per-device profile, only a kernel major/minor that matches one of the bundled module images,
     and it runs inside the app process because it uses the IPsec transform the app installs.
+  - **CVE-2026-43499, GhostLock54 port** (OPPO Reno7 5G): a second row for the same bug, because it
+    is a different source tree with one kernel's offsets baked in. It swaps the target's cred for
+    `init_cred`, clears `task_struct.seccomp` and insmods a `kernelsu.ko` built for
+    `5.4.254-qgki-gaa96eae94d32`; root afterwards is the manager's, not a shell.
+  - **CVE-2026-64560, JokerLock build** (oplus GKI): the same bug as the row above with a payload
+    that targets the `6.6.118-android15-8` oplus builds and checks the firmware hash first.
+  - **CVE-2026-64560 / CVE-2026-98260 / CVE-2026-61269, Shark ports** (6.18 / 6.12): three device
+    builds that ship their own driver script; the port is chosen by kernel family and each refuses
+    a mismatch before anything is pushed.
+  - **CVE-2020-0041** (binder out-of-bounds write): one arm64 binary plus a text profile covering
+    plain 5.4 and 5.4-qgki. A profile that only has placeholder zeros is refused rather than tried,
+    because a zero offset writes to the kernel image base.
+  - **CVE-2019-2215, MTK EasySU** (bootless MediaTek): the only engine that is not a kernel exploit.
+    `mtk-su` abuses `/dev/mtk_cmdq` from an app uid and then boots Magisk 20.4 into `/sbin`, so the
+    bootloader stays locked and nothing survives a reboot. The manager it pairs with is the legacy
+    one (v8.0.4), installed on demand; a modern manager would offer an "update" that bricks it.
+  - **CVE-2024-31317** (zygote argument injection): a *prerequisite*, not a root. It grants this app
+    `WRITE_SECURE_SETTINGS`, writes forged zygote arguments into
+    `hidden_api_blacklist_exemptions` and restores the key in a `finally` block. What it yields is a
+    `system` process, and the row says so instead of claiming `su`.
+  - **LSPromise** (CVE-2026-49881 + CVE-2026-43284): one chain, because neither half is a root on
+    its own. The shell-driven path stages `shelld`, `splicehelper` and `dirtyfrag.ko` and starts the
+    daemon; the `system_server` half needs Java state that only exists inside the app process, so
+    the run reports where it stopped rather than claiming a root it did not earn.
 
   In every case `ksud` is handed to the payload (or staged for it) so KernelSU comes up right after
   root, and the manager is opened when the handoff reports success. If no manager is installed, the
@@ -264,6 +288,12 @@ native-gpu/   arm64 payload sources for CVE-2025-21479 (Makefile)
 native-posix/ arm64 payload sources for CVE-2026-98260 (Makefile)
 native-pct/   arm64 payload sources for CVE-2026-64560 (Makefile)
   opace6/     OnePlus Ace 6 port (CVE-2026-64560, 6.6.118 GKI)
+native-ghost54/  OPPO Reno7 5G port of CVE-2026-43499 (Makefile, links libselinux)
+native-binder54/ CVE-2020-0041 payload (ndk-build; Android.mk + Application.mk)
+app/src/main/assets/mtk/       mtk-su / magiskinit / magisk-boot.sh (CVE-2019-2215)
+app/src/main/assets/lspromise/ shelld, splicehelper, dirtyfrag.ko (49881 + 43284)
+app/src/main/assets/binder54/  binder offset profiles for CVE-2020-0041
+app/src/main/assets/ghostlock54/ kernelsu.ko for the Reno7 5G build
 docs/         vulnerability write-ups (CVE-2026-64560)
 app/src/main/assets/kernel_profiles/   bundled kernel profiles
 ```
@@ -277,6 +307,11 @@ app/src/main/assets/kernel_profiles/   bundled kernel profiles
 - CVE-2025-21479 upstream (phone build): <https://github.com/Qingizi7/cve-2025-21479_iqooneo8>
 - CVE-2026-64560 upstream: <https://github.com/Wangs-official/opace6-cve-2026-64560>
 - CVE-2026-64560 write-up: [`docs/CVE-2026-64560.md`](docs/CVE-2026-64560.md)
+- CVE-2026-43499 Reno7 5G port: <https://github.com/54gay/ghostlock54-OPPO-Reno7-5G>
+- CVE-2020-0041 upstream: <https://github.com/bluefrostsecurity/CVE-2020-0041>
+- CVE-2019-2215 mtk-su: <https://github.com/evdenis/mtk-easy-su>
+- CVE-2024-31317 PoC: <https://github.com/wqry085/PoC-Deployer-System>
+- LSPromise: <https://github.com/LSPosed/LSPromise>
 
 ## Continuous integration
 

@@ -1,6 +1,7 @@
 package com.hexo141.liquidglass.adb
 
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
 
 /** Runs shell commands through the ADB connection. */
@@ -151,6 +152,78 @@ object AdbShell {
             thread.interrupt()
         }
     }
+
+    /**
+     * Puts [bytes] at [remotePath] and verifies the size that landed.
+     *
+     * When [cacheDirectory] is set the bytes are written there first and the shell copies it with
+     * `cat`, which is what the engines use: piping the payload through `cat >` over stdin looks
+     * fine in the log but lands as a 0-byte file on some transports, because the channel closes
+     * before the child has drained its stdin. The relay file is deleted either way.
+     *
+     * @return the size the device reports
+     * @throws IOException when the device's copy does not have the expected size
+     */
+    @Throws(Exception::class)
+    fun stage(
+        manager: AbsAdbConnectionManager,
+        remotePath: String,
+        bytes: ByteArray,
+        cacheDirectory: File?,
+        fileName: String,
+        onLine: (String) -> Unit = {},
+    ): Int {
+        val relay = cacheDirectory?.let { dir ->
+            runCatching {
+                dir.mkdirs()
+                File(dir, fileName).takeIf {
+                    it.writeBytes(bytes)
+                    it.length() == bytes.size.toLong()
+                }
+            }.getOrNull()
+        }
+        if (relay != null) {
+            onLine("$ cat ${relay.absolutePath} > $remotePath")
+            try {
+                // `cat` is an external command: an unreadable source still creates and truncates
+                // the target, so the size is checked below rather than trusting the exit status.
+                exec(manager, "cat '${relay.absolutePath}' > '$remotePath'", 120_000)
+            } finally {
+                runCatching { relay.delete() }
+            }
+        } else {
+            onLine("$ push $remotePath (${bytes.size} bytes)")
+            push(manager, remotePath, bytes)
+        }
+        val actual = runCatching {
+            exec(manager, "wc -c < '$remotePath' 2>/dev/null", 30_000).trim().toIntOrNull()
+        }.getOrNull() ?: -1
+        if (actual != bytes.size) {
+            throw IOException("$remotePath is $actual bytes, expected ${bytes.size}")
+        }
+        return actual
+    }
+
+    /**
+     * Applies [mode] and reads it back, so a file that was staged but not made executable is a log
+     * line rather than a permission error several steps later.
+     *
+     * @return the octal mode `stat` reports, or the `ls -l` listing on a build without `stat`
+     */
+    fun chmod(
+        manager: AbsAdbConnectionManager,
+        remotePath: String,
+        mode: String,
+    ): String? = runCatching {
+        exec(
+            manager,
+            "chmod $mode '$remotePath' 2>&1; stat -c '%a' '$remotePath' 2>/dev/null || " +
+                "ls -l '$remotePath' 2>&1",
+            30_000,
+        ).trim().lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() }
+    }.getOrNull()
 
     /** Opens a shell service, falling back to a plain pipe when the daemon rejects the pty flag. */
     private fun openStream(

@@ -34,19 +34,25 @@ google-services.json
 # Android Profiling
 *.hprof
 
-# Native build outputs (produced by buildNativeExploit / buildNativePageCache / buildNativeGpu /
-# buildNativePct)
+# Native build outputs (produced by the buildNative* tasks)
 /native/**/*.o
 /native-or/*.o
 /native-or/splicehelper
 /native-gpu/**/*.o
 /native-pct/**/*.o
+/native-posix/**/*.o
+/native-ghost54/**/*.o
+/native-ghost54/*.d
+/native-binder54/build/
 /app/src/main/jniLibs/arm64-v8a/libghostlock.so
 /app/src/main/jniLibs/arm64-v8a/libopenroot.so
 /app/src/main/jniLibs/arm64-v8a/libopenbootstrap.so
 /app/src/main/jniLibs/arm64-v8a/libcheese-quest.so
 /app/src/main/jniLibs/arm64-v8a/libcheese-snapdragon.so
 /app/src/main/jniLibs/arm64-v8a/libpct-opace6.so
+/app/src/main/jniLibs/arm64-v8a/libcve98260.so
+/app/src/main/jniLibs/arm64-v8a/libghostlock54.so
+/app/src/main/jniLibs/arm64-v8a/libbinder54.so
 
 # Editor / agent metadata (local only, not part of the project)
 .workbuddy-ai/

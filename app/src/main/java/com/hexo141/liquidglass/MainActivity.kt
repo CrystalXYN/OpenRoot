@@ -48,15 +48,23 @@ import com.hexo141.liquidglass.bootimg.OtaPayloadExtractor
 import com.hexo141.liquidglass.bootimg.ProfileStore
 import com.hexo141.liquidglass.consent.ConsentStore
 import com.hexo141.liquidglass.device.DeviceInfo
+import com.hexo141.liquidglass.root.BinderBombRunner
 import com.hexo141.liquidglass.root.DirtyFragRunner
 import com.hexo141.liquidglass.root.ExploitMemory
+import com.hexo141.liquidglass.root.GhostLock54Runner
 import com.hexo141.liquidglass.root.GpuRunner
+import com.hexo141.liquidglass.root.JokerRunner
 import com.hexo141.liquidglass.root.KsuManager
+import com.hexo141.liquidglass.root.LSPromise
+import com.hexo141.liquidglass.root.MagiskManager
+import com.hexo141.liquidglass.root.MtkEasySu
 import com.hexo141.liquidglass.root.Cve98260Runner
 import com.hexo141.liquidglass.root.PctRunner
 import com.hexo141.liquidglass.root.RootExploit
 import com.hexo141.liquidglass.root.RootHandoff
 import com.hexo141.liquidglass.root.RootShell
+import com.hexo141.liquidglass.root.SharkRunner
+import com.hexo141.liquidglass.root.Zygote31317
 import com.hexo141.liquidglass.ui.ConsentScreen
 import com.hexo141.liquidglass.ui.ConsentTransition
 import com.hexo141.liquidglass.ui.ExploitLogScreen
@@ -84,6 +92,14 @@ class MainActivity : AppCompatActivity() {
         val SHIZUKU_PACKAGES = listOf(SHIZUKU_PACKAGE, SHEVERY_PACKAGE)
         const val SHIZUKU_REQUEST_CODE = 4213
 
+        /**
+         * Set once the automatic connect has asked for the grant.
+         *
+         * Without it a user who declined would be shown the manager's dialog on every foreground
+         * entry. After the first ask the status line carries the hint and the button still works.
+         */
+        const val SHIZUKU_PROMPTED_KEY = "shizuku_auto_prompted"
+
         /** Shell probe cadence: 900 ms between ticks, 25 ticks ≈ 23 s before it gives up. */
         const val SHIZUKU_POLL_INTERVAL_MS = 900L
         const val SHIZUKU_PROBE_TIMEOUT_MS = 3_000L
@@ -95,8 +111,28 @@ class MainActivity : AppCompatActivity() {
         const val ENGINE_CVE_21479 = "cve-2025-21479"
         const val ENGINE_CVE_43284 = "cve-2026-43284"
         const val ENGINE_CVE_98260 = "cve-2026-98260"
+        const val ENGINE_CVE_0041 = "cve-2020-0041"
 
-        /** Same payload as [ENGINE_CVE_98260], but it stops right after clearing SELinux. */
+        /** The one engine that is not a kernel exploit: mtk-su plus a Magisk in /sbin. */
+        const val ENGINE_MEDIATEK = "mediatek-mtk-su"
+
+        /**
+         * Zygote argument injection, offered as a *prerequisite* rather than a root: it yields a
+         * `system` process, and the row says so instead of pretending otherwise.
+         */
+        const val ENGINE_ZYGOTE_31317 = "cve-2024-31317"
+
+        /**
+         * LSPromise: 49881 into system_server followed by 43284. One row because neither half is a
+         * root on its own, and one engine because the two are only useful in this order.
+         */
+        const val ENGINE_LSPROMISE = "lspromise-49881-43284"
+
+        /**
+         * Same payload as [ENGINE_CVE_98260], but it stops right after clearing SELinux. Not a row
+         * of its own: it is the chip on the 98260 row, because it is the same bug with an early
+         * exit, not a second vulnerability.
+         */
         const val ENGINE_CVE_98260_SELINUX = "cve-2026-98260-selinux"
 
         /**
@@ -217,15 +253,23 @@ class MainActivity : AppCompatActivity() {
             Thread({
                 val uid = ShizukuShell.probeUid(SHIZUKU_PROBE_TIMEOUT_MS)
                 val error = ShizukuShell.lastError
+                // Granted but still unable to start a process: waiting the whole poll window would
+                // only delay the fallback. Two ticks separate that from "the user has not answered
+                // the dialog yet", where the permission flag is still DENIED.
+                val stuck = uid == null && ShizukuShell.isAuthorized()
                 runOnUiThread {
                     when {
                         uid != null -> onShizukuGranted()
-                        shizukuWaitTicks >= SHIZUKU_POLL_MAX_TICKS -> {
-                            shizukuStatus.value = "No shell access yet" +
-                                (error?.let { " - $it" } ?: "") + " · tap to retry"
+                        shizukuWaitTicks >= SHIZUKU_POLL_MAX_TICKS ||
+                            (stuck && shizukuWaitTicks >= 2) -> {
+                            shizukuStatus.value = getString(R.string.shizuku_no_access) +
+                                (error?.let { " - $it" } ?: "") + getString(R.string.shizuku_tap_retry)
+                            // The grant did not turn into a working channel, so stop waiting and
+                            // let the pairing route take over instead of leaving the screen idle.
+                            maybeAutoConnectAdb()
                         }
                         else -> {
-                            shizukuStatus.value = "Waiting for Shizuku permission…" +
+                            shizukuStatus.value = getString(R.string.shizuku_waiting) +
                                 (error?.let { " ($it)" } ?: "")
                             refreshHandler.postDelayed(this, SHIZUKU_POLL_INTERVAL_MS)
                         }
@@ -241,7 +285,10 @@ class MainActivity : AppCompatActivity() {
             if (grantResult == PackageManager.PERMISSION_GRANTED) {
                 startShizukuPolling()
             } else {
-                shizukuStatus.value = "Shizuku permission denied"
+                shizukuStatus.value = getString(R.string.shizuku_denied)
+                // A refusal is final for the automatic route; hand the screen back to ADB so it
+                // does not sit on a grant that will not arrive.
+                maybeAutoConnectAdb()
             }
         }
 
@@ -253,6 +300,21 @@ class MainActivity : AppCompatActivity() {
 
     /** Root command channel available (bootstrap came up). */
     private val commandMode = mutableStateOf(false)
+
+    /** Whether the MediaTek payload has a chance here; null until the probe has run. */
+    private val mtkProbe = mutableStateOf<MtkEasySu.Probe?>(null)
+
+    /** The zygote window, read once per connection. */
+    private val zygoteProbe = mutableStateOf<Zygote31317.Probe?>(null)
+
+    /** LSPromise's own preconditions (Android 17, vermagic, KernelSU); read once per connection. */
+    private val lspromiseProbe = mutableStateOf<LSPromise.Probe?>(null)
+
+    /**
+     * Whether the injected payload actually took. Separate from [zygoteProbe] on purpose: being
+     * inside the vulnerable window is not the same as the write having worked.
+     */
+    private val zygoteReady = mutableStateOf(false)
 
     /** Auto-connect at most once per foreground entry, so a failure does not loop. */
     private var autoConnectTried = false
@@ -321,10 +383,10 @@ class MainActivity : AppCompatActivity() {
                 contentResolver.openOutputStream(uri)?.use { it.write(doc.toBytes()) }
                     ?: error("cannot open the output stream")
                 logLine("[+] offsets exported: ${doc.release} (${doc.provenance.origin})")
-                toastText("Offsets exported")
+                toastText(getString(R.string.offsets_exported))
             } catch (e: Exception) {
                 logLine("[!] export failed: ${e.message}")
-                toastText("Export failed: ${e.message}")
+                toastText(getString(R.string.export_failed, e.message.orEmpty()))
             }
         }
 
@@ -437,12 +499,13 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
-        // Shizuku is only touched once the user asks for it: loading the API and registering the
-        // callback during startup adds work to the first frame for a feature most launches skip.
+        // The grant callback is registered up front now that every launch checks Shizuku on its
+        // own: a permission result that arrives before the first tap would otherwise be dropped.
         // The wallpaper runs edge to edge; each screen pads its own content against
         // WindowInsets.safeDrawing, so nothing sits under the status or navigation bar.
 
         consentAccepted.value = ConsentStore.isAccepted(this)
+        ensureShizukuListener()
 
         // Back closes the log page or the picker first, and only then leaves the app.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -603,13 +666,9 @@ class MainActivity : AppCompatActivity() {
         if (!consentAccepted.value) return
         beginLiveUpdates()
         refreshParsedProfiles()
-        // The grant may have been switched on in Shevery's own app list, where no callback exists:
-        // re-probe as soon as we are back in front.
-        if (!shizukuReady.value && shizukuStatus.value != null &&
-            runCatching { Shizuku.pingBinder() }.getOrDefault(false)
-        ) {
-            startShizukuPolling()
-        }
+        // The Shizuku check now lives in maybeAutoConnect(), which beginLiveUpdates() runs on
+        // every foreground entry. That covers the case this block used to handle by hand: a grant
+        // switched on in Shevery's own app list, where no permission callback is ever delivered.
     }
 
     override fun onPause() {
@@ -674,19 +733,93 @@ class MainActivity : AppCompatActivity() {
     // ------------------------------------------------------------------ actions
 
     /**
-     * Connect directly when the device is already paired instead of asking for a code again; only a
-     * failure brings the pairing button back.
+     * Runs on every foreground entry: Shizuku first, ADB only when it cannot serve.
+     *
+     * A grant that is already in place therefore connects with no tap at all. The old body of this
+     * method lives on as [maybeAutoConnectAdb] and keeps its exact behaviour, so a device without
+     * Shizuku sees the same silent connect as before.
+     */
+    private fun maybeAutoConnect() {
+        if (autoConnectTried) return
+        if (pairingRunning.value || connected.value || shizukuReady.value || connecting.value) return
+        autoConnectTried = true
+        autoConnectShizuku()
+    }
+
+    /**
+     * Checks the whole Shizuku chain and connects when it works.
+     *
+     * The order is deliberate: service alive, version, grant, then a real `id -u` through the
+     * channel (the poll). A manager that reports the grant but refuses to start a process is
+     * caught by the last step, and only then does the ADB route get a turn. Nothing here prompts
+     * on a device where Shizuku is not installed.
+     */
+    private fun autoConnectShizuku() {
+        if (shizukuReady.value) return
+        if (shizukuManagerPackage() == null) {
+            // Not installed: there is no status worth showing and no reason to wait.
+            maybeAutoConnectAdb()
+            return
+        }
+        Thread({
+            val running = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+            if (!running) {
+                runOnUiThread {
+                    shizukuStatus.value = getString(R.string.shizuku_not_running_using_adb)
+                    maybeAutoConnectAdb()
+                }
+                return@Thread
+            }
+            if (runCatching { Shizuku.isPreV11() }.getOrDefault(false)) {
+                runOnUiThread {
+                    shizukuStatus.value = getString(R.string.shizuku_needs_v11)
+                    maybeAutoConnectAdb()
+                }
+                return@Thread
+            }
+            if (ShizukuShell.isAuthorized()) {
+                // Authorized is not the same as usable: the poll runs `id -u` and only a real
+                // answer marks the channel ready.
+                runOnUiThread { startShizukuPolling(auto = true) }
+                return@Thread
+            }
+            val denied = runCatching {
+                Shizuku.shouldShowRequestPermissionRationale()
+            }.getOrDefault(false)
+            val prefs = getSharedPreferences(PairingState.PREF_NAME, MODE_PRIVATE)
+            val prompted = prefs.getBoolean(SHIZUKU_PROMPTED_KEY, false)
+            if (!denied && !prompted) {
+                // Ask once, automatically. The flag is stored before the request so a manager
+                // that never answers cannot turn every launch into another dialog.
+                prefs.edit().putBoolean(SHIZUKU_PROMPTED_KEY, true).apply()
+                ensureShizukuListener()
+                runCatching { Shizuku.requestPermission(SHIZUKU_REQUEST_CODE) }
+                    .onFailure { Log.w(TAG, "automatic Shizuku permission request failed", it) }
+                runOnUiThread { startShizukuPolling(auto = true) }
+            } else {
+                runOnUiThread {
+                    shizukuStatus.value = if (denied) {
+                        getString(R.string.shizuku_access_denied)
+                    } else {
+                        getString(R.string.shizuku_access_not_granted)
+                    }
+                    maybeAutoConnectAdb()
+                }
+            }
+        }, "shizuku-auto").start()
+    }
+
+    /**
+     * The ADB half: connect directly when the device is already paired, so no code is asked for
+     * again; only a failure brings the pairing button back.
      *
      * A device paired before the isPaired flag existed still has our ADB key stored, so that case
      * tries one silent direct connect and fills the flag in when it works.
      */
-    private fun maybeAutoConnect() {
-        if (autoConnectTried) return
-        // A granted Shizuku shell already runs payloads, so there is nothing to reconnect.
+    private fun maybeAutoConnectAdb() {
         if (pairingRunning.value || connected.value || shizukuReady.value || connecting.value) return
         val isPaired = paired.value
         if (!isPaired && !AdbKeyManager.hasStoredKey(this)) return
-        autoConnectTried = true
         connect(silent = !isPaired)
     }
 
@@ -699,7 +832,7 @@ class MainActivity : AppCompatActivity() {
         if (shizukuRequesting) return
         shizukuRequesting = true
         ensureShizukuListener()
-        shizukuStatus.value = "Checking Shizuku…"
+        shizukuStatus.value = getString(R.string.shizuku_checking)
         // Every Shizuku call below is a synchronous binder round trip, and requestPermission even
         // waits for the manager to bring its approval screen up. On the main thread that froze the
         // UI for a few seconds, so the whole conversation runs on a worker and only the result is
@@ -711,12 +844,12 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     shizukuRequesting = false
                     if (manager == null) {
-                        shizukuStatus.value = "Shizuku / Shevery is not installed"
+                        shizukuStatus.value = getString(R.string.shizuku_not_installed)
                     } else {
                         shizukuStatus.value = if (manager == SHEVERY_PACKAGE) {
-                            "Start Shevery's service, then tap again"
+                            getString(R.string.shizuku_start_shevery)
                         } else {
-                            "Start the Shizuku service, then tap again"
+                            getString(R.string.shizuku_start_service)
                         }
                         openShizuku(manager)
                     }
@@ -726,7 +859,7 @@ class MainActivity : AppCompatActivity() {
             if (runCatching { Shizuku.isPreV11() }.getOrDefault(false)) {
                 runOnUiThread {
                     shizukuRequesting = false
-                    shizukuStatus.value = "Shizuku 11 or newer is required"
+                    shizukuStatus.value = getString(R.string.shizuku_needs_v11)
                 }
                 return@Thread
             }
@@ -745,13 +878,14 @@ class MainActivity : AppCompatActivity() {
                 startShizukuPolling()
                 if (requestError != null) {
                     shizukuStatus.value =
-                        "Waiting for Shizuku permission… (request failed: $requestError)"
+                        getString(R.string.shizuku_request_failed, requestError.orEmpty())
                 }
             }
         }, "shizuku-request").start()
     }
 
     /** Registers the permission callback on first use instead of during startup. */
+    @Synchronized
     private fun ensureShizukuListener() {
         if (shizukuListenerRegistered) return
         shizukuListenerRegistered = true
@@ -759,10 +893,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Starts (or restarts) the shell probe; every tick checks the real channel. */
-    private fun startShizukuPolling() {
+    private fun startShizukuPolling(auto: Boolean = false) {
         refreshHandler.removeCallbacks(shizukuPoll)
         shizukuWaitTicks = 0
-        shizukuStatus.value = "Waiting for Shizuku permission…"
+        shizukuStatus.value = if (auto) getString(R.string.shizuku_checking)
+        else getString(R.string.shizuku_waiting)
         refreshHandler.post(shizukuPoll)
     }
 
@@ -782,7 +917,7 @@ class MainActivity : AppCompatActivity() {
     private fun openShizuku(pkg: String = shizukuManagerPackage() ?: SHIZUKU_PACKAGE) {
         val intent = packageManager.getLaunchIntentForPackage(pkg)
         if (intent == null) {
-            shizukuStatus.value = "Cannot open Shizuku"
+            shizukuStatus.value = getString(R.string.shizuku_cannot_open)
             return
         }
         runCatching { startActivity(intent) }
@@ -843,12 +978,41 @@ class MainActivity : AppCompatActivity() {
         val c98260KernelOk: Boolean,
         /** Payload packaged and a profile exists (parsed or built in). */
         val c98260: Boolean,
+        /** A binder profile carries the offsets this exact `uname -r` needs, or null. */
+        val binderBomb: String?,
+        /**
+         * CVE-2026-43499, second payload: GhostLock54's offsets are compiled in and it only runs on
+         * the one kernel it was built for, so it cannot be expressed as a profile.
+         */
+        val ghost54: Boolean,
+        /** CVE-2026-64560, JokerLock's oplus GKI build; its own `--preflight` is the real gate. */
+        val joker: Boolean,
+        /** CVE-2026-98260 as shipped by Shark, 6.18 family. */
+        val shark98260: Boolean,
+        /** CVE-2026-64560 as shipped by Shark, 6.18 family. */
+        val shark64560: Boolean,
     )
 
     private fun availability(info: DeviceInfo?): Availability {
         // No `connected.value` read here: this runs off the main thread too, where snapshot reads
         // can be stale. A non-null DeviceInfo already means the device answered.
-        if (info == null) return Availability(false, null, false, null, false, null, false, false)
+        if (info == null) {
+            return Availability(
+                profile = false,
+                pageCache = null,
+                gpuMatched = false,
+                gpuPayload = null,
+                pctMatched = false,
+                pctPayload = null,
+                c98260KernelOk = false,
+                c98260 = false,
+                binderBomb = null,
+                ghost54 = false,
+                joker = false,
+                shark98260 = false,
+                shark64560 = false,
+            )
+        }
         val profile = RootExploit.isPayloadPresent(this) && RootExploit.hasProfile(this, info.kernel)
         val pageCache = if (DirtyFragRunner.isPayloadPresent(this)) {
             DirtyFragRunner.describe(info.androidRelease, info.kernel)
@@ -869,15 +1033,47 @@ class MainActivity : AppCompatActivity() {
         val c98260 = c98260KernelOk &&
             Cve98260Runner.isPayloadPresent(this) &&
             Cve98260Runner.hasProfile(this, info.kernel)
+        // CVE-2020-0041 is profile-driven too: one binary covers plain 5.4 and 5.4-qgki, and the
+        // profile either carries the offsets this `uname -r` needs or it does not.
+        val binderBomb = if (BinderBombRunner.isPayloadPresent(this)) {
+            BinderBombRunner.describe(this, info.kernel)
+        } else {
+            null
+        }
+        // The other payloads that share a CVE with a row above. They are resolved here rather than
+        // listed as rows: the picker names vulnerabilities, and which build of one runs is a
+        // property of the device, not something the user should have to choose.
+        val ghost54 = info.kernel == GhostLock54Runner.KERNEL &&
+            GhostLock54Runner.isPayloadPresent(this)
+        val joker = JokerRunner.isSupported(info.kernel) && JokerRunner.isPayloadPresent(this)
+        val shark98260 = SharkRunner.Engine.CVE_98260.let {
+            it.matches(info.kernel) && SharkRunner.isPayloadPresent(this, it)
+        }
+        val shark64560 = SharkRunner.Engine.CVE_64560.let {
+            it.matches(info.kernel) && SharkRunner.isPayloadPresent(this, it)
+        }
         return Availability(
-            profile, pageCache, gpuMatched, gpuPayload, pctMatched, pctPayload,
-            c98260KernelOk, c98260,
+            profile = profile,
+            pageCache = pageCache,
+            gpuMatched = gpuMatched,
+            gpuPayload = gpuPayload,
+            pctMatched = pctMatched,
+            pctPayload = pctPayload,
+            c98260KernelOk = c98260KernelOk,
+            c98260 = c98260,
+            binderBomb = binderBomb,
+            ghost54 = ghost54,
+            joker = joker,
+            shark98260 = shark98260,
+            shark64560 = shark64560,
         )
     }
 
     private fun resolveEngine(info: DeviceInfo): Pair<String?, SupportState> {
         val available = availability(info)
-        if (available.profile) {
+        // GhostLock54 covers the one kernel a profile cannot describe, so either arm makes the
+        // 43499 row the one to show on the card.
+        if (available.profile || available.ghost54) {
             return getString(R.string.engine_kernel_profile) to SupportState.Supported
         }
         // Same class of bug as 43499 (a kernel UAF turned into a cred write), so it sits next to it.
@@ -888,6 +1084,16 @@ class MainActivity : AppCompatActivity() {
                 null -> SupportState.Candidate
             }
             return "CVE-2026-98260" to state
+        }
+        // An exact binder profile for this `uname -r` is a fact, not a guess, so it outranks the
+        // "worth trying" engines below; whether it takes is still only known after a run.
+        available.binderBomb?.let { label ->
+            val state = when (ExploitMemory.result(this, info.kernel, ExploitMemory.ENGINE_BINDER)) {
+                true -> SupportState.Supported
+                false -> SupportState.Unsupported
+                null -> SupportState.Candidate
+            }
+            return label to state
         }
         // A matched device build is more specific than "this SoC has a GPU", so it comes first.
         if (available.pctPayload != null) {
@@ -947,6 +1153,28 @@ class MainActivity : AppCompatActivity() {
                     Log.i(TAG, line)
                 }
                 runOnUiThread { ksudTarget.value = ksud }
+                // Guarded on its own: this is a getprop plus a file check, and a throw here must not
+                // stop the rest of the worker on a device that is plainly connected.
+                val mtk = runCatching {
+                    MtkEasySu.probe(AdbConnectionManager.get(this)) { line ->
+                        Log.i(TAG, "mtk probe: $line")
+                    }
+                }.onFailure { Log.w(TAG, "mtk probe failed", it) }.getOrNull()
+                if (mtk != null) runOnUiThread { mtkProbe.value = mtk }
+                val zygote = runCatching {
+                    Zygote31317.probe(AdbConnectionManager.get(this)) { line ->
+                        Log.i(TAG, "31317 probe: $line")
+                    }
+                }.onFailure { Log.w(TAG, "31317 probe failed", it) }.getOrNull()
+                if (zygote != null) runOnUiThread { zygoteProbe.value = zygote }
+                // Both probes are property reads plus one file check, so they ride along with the
+                // connect instead of waiting for the picker to open.
+                val lspromise = runCatching {
+                    LSPromise.probe(AdbConnectionManager.get(this)) { line ->
+                        Log.i(TAG, "lspromise probe: $line")
+                    }
+                }.onFailure { Log.w(TAG, "lspromise probe failed", it) }.getOrNull()
+                if (lspromise != null) runOnUiThread { lspromiseProbe.value = lspromise }
             }
         }, "adb-device-info").start()
     }
@@ -982,84 +1210,96 @@ class MainActivity : AppCompatActivity() {
         val manager = ksudTarget.value
         val noConnection = info == null
         val handoff = if (manager == null) {
-            "root command channel"
+            getString(R.string.handoff_root_channel)
         } else {
-            "starts ${manager.packageName}"
+            getString(R.string.handoff_starts, manager.packageName)
         }
 
         return listOf(
+            /*
+             * One row per CVE. CVE-2026-43499 ships two payloads: the generic one takes its
+             * offsets from a GLK1 profile, GhostLock54 has one kernel's offsets compiled in. The
+             * port wins when its exact kernel is running - a profile parsed for a different build
+             * would be worse than useless there - and everywhere else the profile decides.
+             */
             ExploitChoice(
                 id = ENGINE_CVE_43499,
                 title = "CVE-2026-43499",
                 detail = when {
+                    available.ghost54 -> getString(R.string.engine_ghost54_detail, handoff)
                     available.profile -> {
                         val picked = ProfileStore.active(this)
-                        if (picked != null && picked != kernel) "Using profile for $picked"
-                        else "Kernel profile for $kernel"
+                        if (picked != null && picked != kernel) getString(R.string.engine_using_profile, picked)
+                        else getString(R.string.engine_kernel_profile_for, kernel)
                     }
-                    noConnection -> "Connect to adb first"
-                    !RootExploit.isPayloadPresent(this) -> "Payload not packaged for this ABI"
+                    noConnection -> getString(R.string.engine_connect_first)
+                    !RootExploit.isPayloadPresent(this) -> getString(R.string.engine_payload_missing)
                     // The fix pill points to the Profile tab; repeating the same hint here only
                     // made the row harder to read.
                     else -> ""
                 },
-                enabled = available.profile,
+                enabled = available.ghost54 || available.profile,
                 // Picking a profile now belongs entirely to the Profile tab (Built-in offset
                 // tables). A missing profile is the one blocker the user can clear inside the app,
                 // so this pill takes them there instead of offering a second picker on this row.
-                fixLabel = if (!available.profile && !noConnection &&
+                fixLabel = if (!available.ghost54 && !available.profile && !noConnection &&
                     RootExploit.isPayloadPresent(this)
-                ) "Open Profile" else null,
+                ) getString(R.string.engine_open_profile) else null,
                 onFix = {
                     pickerVisible.value = false
                     selectedTab.value = 1
                 },
             ),
+            /*
+             * One row for CVE-2026-98260, three ways in: Shark's own 6.18 build, the local payload
+             * with a parsed profile, and the same local payload with `--selinux-only`. The last one
+             * stops before the cred rewrite, so it is offered as a chip on the row rather than a
+             * second vulnerability - it never was one.
+             */
             ExploitChoice(
                 id = ENGINE_CVE_98260,
                 title = "CVE-2026-98260",
                 detail = when {
-                    noConnection -> "Connect to adb first"
-                    !available.c98260KernelOk -> "Kernel older than 5.7"
-                    !Cve98260Runner.isPayloadPresent(this) -> "Payload not packaged for this ABI"
+                    noConnection -> getString(R.string.engine_connect_first)
+                    available.shark98260 -> getString(R.string.engine_shark_driver, handoff)
+                    !available.c98260KernelOk -> getString(R.string.engine_kernel_old)
+                    !Cve98260Runner.isPayloadPresent(this) -> getString(R.string.engine_payload_missing)
                     !Cve98260Runner.hasProfile(this, kernel) ->
-                        "Parse this kernel's boot.img in Profile first"
-                    else -> "POSIX timer race, up to 24 rounds, $handoff"
+                        getString(R.string.engine_parse_first)
+                    else -> getString(R.string.engine_c98260_detail, handoff)
                 },
-                enabled = available.c98260,
+                enabled = available.shark98260 || available.c98260,
+                // Only the local payload has the short path; Shark's build runs its own script.
+                altLabel = if (available.c98260) getString(R.string.engine_only_selinux) else null,
+                onAlt = { startExploit(ENGINE_CVE_98260_SELINUX) },
             ),
-            ExploitChoice(
-                id = ENGINE_CVE_98260_SELINUX,
-                title = "CVE-2026-98260 - Only selinux",
-                detail = when {
-                    noConnection -> "Connect to adb first"
-                    !available.c98260KernelOk -> "Kernel older than 5.7"
-                    !Cve98260Runner.isPayloadPresent(this) -> "Payload not packaged for this ABI"
-                    !Cve98260Runner.hasProfile(this, kernel) ->
-                        "Parse this kernel's boot.img in Profile first"
-                    else -> "Sets SELinux permissive, stops before cred"
-                },
-                enabled = available.c98260,
-            ),
+            /*
+             * One row for CVE-2026-64560, three builds of the same posix-cpu-timers bug. JokerLock
+             * is the only one that pins a fingerprint, so it goes first; Shark's is next because it
+             * names its kernel family; the generic port is last because `--preflight` is its only
+             * gate. A run is still remembered per build inside the runner.
+             */
             ExploitChoice(
                 id = ENGINE_CVE_64560,
                 title = "CVE-2026-64560",
                 detail = when {
-                    noConnection -> "Connect to adb first"
-                    !available.pctMatched -> "No ported build for this device"
-                    available.pctPayload == null -> "Payload not packaged for this ABI"
-                    else -> "Race, up to 32 attempts, SELinux stays off, $handoff"
+                    noConnection -> getString(R.string.engine_connect_first)
+                    available.joker -> getString(R.string.engine_joker_detail, handoff)
+                    available.shark64560 -> getString(R.string.engine_shark_driver, handoff)
+                    !available.pctMatched -> getString(R.string.engine_no_port)
+                    available.pctPayload == null -> getString(R.string.engine_payload_missing)
+                    else -> getString(R.string.engine_pct_detail, handoff)
                 },
-                enabled = available.pctPayload != null,
+                enabled = available.joker || available.shark64560 || available.pctPayload != null,
             ),
             ExploitChoice(
                 id = ENGINE_CVE_21479,
                 title = "CVE-2025-21479",
                 detail = when {
-                    noConnection -> "Connect to adb first"
-                    !available.gpuMatched -> "GPU not supported"
-                    available.gpuPayload == null -> "Payload not packaged for this ABI"
-                    else -> "SELinux stays off, $handoff"
+                    noConnection -> getString(R.string.engine_connect_first)
+                    !available.gpuMatched -> getString(R.string.engine_gpu_unsupported)
+                    available.gpuPayload == null -> getString(R.string.engine_payload_missing)
+                    else -> getString(R.string.engine_gpu_detail, handoff)
                 },
                 enabled = available.gpuPayload != null,
             ),
@@ -1067,12 +1307,118 @@ class MainActivity : AppCompatActivity() {
                 id = ENGINE_CVE_43284,
                 title = "CVE-2026-43284",
                 detail = when {
-                    noConnection -> "Connect to adb first"
-                    available.pageCache == null -> "Kernel not covered by the module images"
+                    noConnection -> getString(R.string.engine_connect_first)
+                    available.pageCache == null -> getString(R.string.engine_not_covered)
                     else -> "${available.pageCache}, $handoff"
                 },
                 enabled = available.pageCache != null,
             ),
+            /*
+             * LSPromise is gated on its own prerequisites only, not on 31317: it is a complete chain
+             * that starts from an ordinary app, so requiring the zygote bug first would be wrong.
+             */
+            ExploitChoice(
+                id = ENGINE_LSPROMISE,
+                title = getString(R.string.engine_lspromise_title),
+                detail = when {
+                    noConnection -> getString(R.string.engine_connect_first)
+                    lspromiseProbe.value == null -> getString(R.string.support_checking)
+                    !LSPromise.isPayloadPresent(this) ->
+                        getString(R.string.engine_payload_missing)
+                    else -> lspromiseProbe.value!!.detail
+                },
+                enabled = info != null &&
+                    lspromiseProbe.value?.canRun == true &&
+                    LSPromise.isPayloadPresent(this),
+            ),
+            /*
+             * CVE-2024-31317 is the one row that does not claim root, and the text says so twice: in
+             * the title (marked as a prerequisite) and in the ready detail (system only). A user who
+             * picks it expecting `su` would otherwise read the result as a failure.
+             */
+            ExploitChoice(
+                id = ENGINE_ZYGOTE_31317,
+                title = getString(R.string.engine_zygote_title),
+                detail = when {
+                    noConnection -> getString(R.string.engine_connect_first)
+                    zygoteProbe.value == null -> getString(R.string.support_checking)
+                    zygoteReady.value -> getString(R.string.zygote_ran)
+                    zygoteProbe.value!!.canInject ->
+                        getString(R.string.zygote_ready, zygoteProbe.value!!.patchLevels.size)
+                    else -> zygoteProbe.value!!.detail
+                },
+                enabled = info != null && zygoteProbe.value?.canInject == true,
+            ),
+            /*
+             * CVE-2020-0041 is profile-driven: one binary covers plain 5.4 and 5.4-qgki, and the
+             * profile decides which kernel it targets. No profile means no run, not a best guess.
+             */
+            ExploitChoice(
+                id = ENGINE_CVE_0041,
+                title = "CVE-2020-0041",
+                detail = when {
+                    noConnection -> getString(R.string.engine_connect_first)
+                    available.binderBomb != null ->
+                        getString(R.string.engine_0041_ready, available.binderBomb, handoff)
+                    !BinderBombRunner.isPayloadPresent(this) ->
+                        getString(R.string.engine_payload_missing)
+                    else -> getString(R.string.engine_0041_no_profile, kernel)
+                },
+                enabled = available.binderBomb != null,
+            ),
+            /*
+             * The MediaTek row is the only one that is not a kernel exploit. Its gate is the
+             * `mtk-su` precondition set: an MTK SoC and a command-queue node the shell user can
+             * open. A build patched after March 2020 stays enabled, because only the payload can
+             * really answer that, but the row says so instead of pretending.
+             */
+            ExploitChoice(
+                id = ENGINE_MEDIATEK,
+                title = getString(R.string.engine_mtk_title),
+                detail = when {
+                    noConnection -> getString(R.string.engine_connect_first)
+                    mtkProbe.value == null -> getString(R.string.support_checking)
+                    !mtkProbe.value!!.isMediaTek ->
+                        getString(R.string.engine_mtk_not_mtk, mtkProbe.value!!.soc)
+                    mtkProbe.value!!.cmdqPaths.isEmpty() ->
+                        getString(R.string.engine_mtk_no_cmdq)
+                    mtkProbe.value!!.likelyPatched ->
+                        getString(R.string.engine_mtk_patched, mtkProbe.value!!.patchLevel)
+                    else -> getString(R.string.engine_mtk_detail, handoff)
+                },
+                enabled = info != null && (mtkProbe.value?.supported ?: false),
+            ),
+            // CVE-2026-61269 has no other build, so it keeps a row of its own. The other two Shark
+            // ports are folded into the 64560 and 98260 rows above.
+            SharkRunner.Engine.CVE_61269.toChoice(info, noConnection, handoff),
+        )
+    }
+
+    /**
+     * One picker row for a Shark port.
+     *
+     * The row is disabled unless three things hold: a device is connected, the running kernel is in
+     * the family the port was built against, and the binaries made it into the APK. Every disabled
+     * state names the reason, so a 5.x device sees "built for 6.18" rather than a bare grey row.
+     */
+    private fun SharkRunner.Engine.toChoice(
+        info: DeviceInfo?,
+        noConnection: Boolean,
+        handoff: String,
+    ): ExploitChoice {
+        val kernel = info?.kernel.orEmpty()
+        val family = releasePrefixes.joinToString(" / ")
+        val packaged = SharkRunner.isPayloadPresent(this@MainActivity, this)
+        return ExploitChoice(
+            id = this.id,
+            title = this.label,
+            detail = when {
+                noConnection -> getString(R.string.engine_connect_first)
+                !matches(kernel) -> getString(R.string.engine_built_for, family, kernel)
+                !packaged -> getString(R.string.engine_payload_missing)
+                else -> getString(R.string.engine_shark_driver, handoff)
+            },
+            enabled = info != null && matches(kernel) && packaged,
         )
     }
 
@@ -1171,23 +1517,50 @@ class MainActivity : AppCompatActivity() {
         } else {
             null
         }
+        // A CVE with more than one build is resolved here, once, from the device. The picker shows
+        // one row per vulnerability, so the choice of build cannot be the user's - but it must not
+        // be a guess either: every branch below is a fact about this kernel, not a ranking.
+        val ghost54 = info.kernel == GhostLock54Runner.KERNEL &&
+            GhostLock54Runner.isPayloadPresent(this)
+        val joker = JokerRunner.isSupported(info.kernel) && JokerRunner.isPayloadPresent(this)
+        val shark98260 = SharkRunner.Engine.CVE_98260.takeIf {
+            it.matches(info.kernel) && SharkRunner.isPayloadPresent(this, it)
+        }
+        val shark64560 = SharkRunner.Engine.CVE_64560.takeIf {
+            it.matches(info.kernel) && SharkRunner.isPayloadPresent(this, it)
+        }
         // CVE-2026-43284 hands off to a manager when one is installed, otherwise it keeps a root
         // command channel; the page cache engine itself does not care which. Which one applies is
         // decided after a fresh resolve inside the worker, not from the cached value.
         when (engineId) {
             ENGINE_CVE_43499 ->
-                if (!RootExploit.hasProfile(this, info.kernel)) {
+                if (!ghost54 && !RootExploit.hasProfile(this, info.kernel)) {
                     logLine("[!] no profile for ${info.kernel}; open Profile and pick one under " +
                         "Built-in offset tables")
                     return
                 }
             ENGINE_CVE_98260 ->
-                if (!Cve98260Runner.isSupported(this, info)) return
+                if (shark98260 == null && !Cve98260Runner.isSupported(this, info)) return
             ENGINE_CVE_98260_SELINUX ->
                 if (!Cve98260Runner.isSupported(this, info)) return
-            ENGINE_CVE_64560 -> if (pctPayload == null) return
+            ENGINE_CVE_64560 ->
+                if (!joker && shark64560 == null && pctPayload == null) return
             ENGINE_CVE_21479 -> if (gpuPayload == null) return
-            else -> if (!DirtyFragRunner.isSupported(info.androidRelease, info.kernel)) return
+            ENGINE_CVE_0041 -> if (!BinderBombRunner.isSupported(this, info.kernel)) return
+            ENGINE_MEDIATEK -> if (mtkProbe.value?.supported != true) return
+            ENGINE_ZYGOTE_31317 -> if (zygoteProbe.value?.canInject != true) return
+            ENGINE_LSPROMISE ->
+                if (lspromiseProbe.value?.canRun != true || !LSPromise.isPayloadPresent(this)) return
+            ENGINE_CVE_43284 ->
+                if (!DirtyFragRunner.isSupported(info.androidRelease, info.kernel)) return
+            else -> {
+                // CVE-2026-61269 is the only Shark port left with a row of its own; it names its
+                // kernel family and the runner refuses a mismatch before anything is pushed.
+                val shark = SharkRunner.Engine.ofId(engineId) ?: return
+                if (!shark.matches(info.kernel) ||
+                    !SharkRunner.isPayloadPresent(this, shark)
+                ) return
+            }
         }
 
         exploiting.value = true
@@ -1203,12 +1576,30 @@ class MainActivity : AppCompatActivity() {
             val outcome = runCatching {
                 val ksud = KsuManager.resolve(this, AdbConnectionManager.get(this), ::logLine)
                     ?.takeIf { it.packageName.isNotEmpty() }
+                val shark = SharkRunner.Engine.ofId(engineId)
                 when {
-                    engineId == ENGINE_CVE_43499 -> runProfileEngine(info, ksud)
-                    engineId == ENGINE_CVE_98260 -> runC98260Engine(info, ksud)
+                    // 43499: GhostLock54 first, because a profile cannot describe its kernel.
+                    engineId == ENGINE_CVE_43499 ->
+                        if (ghost54) runGhostLock54Engine() else runProfileEngine(info, ksud)
+                    // 98260: Shark's 6.18 build, else the local payload (which owns the short path).
+                    engineId == ENGINE_CVE_98260 ->
+                        if (shark98260 != null) runSharkEngine(info, shark98260, ksud)
+                        else runC98260Engine(info, ksud)
                     engineId == ENGINE_CVE_98260_SELINUX -> runC98260SelinuxEngine(info)
+                    // 64560: the fingerprint-pinned build, then the family build, then the port.
+                    engineId == ENGINE_CVE_64560 -> when {
+                        joker -> runJokerEngine(info, ksud)
+                        shark64560 != null -> runSharkEngine(info, shark64560, ksud)
+                        pctPayload != null -> runPctEngine(info, pctPayload, ksud)
+                        else -> getString(R.string.engine_no_port)
+                    }
+                    engineId == ENGINE_CVE_0041 -> runBinderEngine(info, ksud)
+                    engineId == ENGINE_MEDIATEK -> runMediatekEngine()
+                    engineId == ENGINE_ZYGOTE_31317 -> runZygoteEngine()
+                    engineId == ENGINE_LSPROMISE -> runLSPromiseEngine()
                     pctPayload != null -> runPctEngine(info, pctPayload, ksud)
                     gpuPayload != null -> runGpuEngine(info, gpuPayload, ksud)
+                    shark != null -> runSharkEngine(info, shark, ksud)
                     else -> runPageCacheEngine(
                         info = info,
                         ksud = ksud,
@@ -1474,6 +1865,249 @@ class MainActivity : AppCompatActivity() {
         return reportHandoff(ksud, result.handoff, result.exitCode)
     }
 
+    /**
+     * JokerLock's OGKI build of CVE-2026-64560.
+     *
+     * The payload reports its own STAGE0..STAGE8 progress, so this runner only forwards it and then
+     * checks `su -c id`. The vulnerability is the same one [runPctEngine] drives, which is why a
+     * successful run is remembered under the same engine id; only the payload differs.
+     */
+    private fun runJokerEngine(info: DeviceInfo, ksud: KsuManager.Target?): String {
+        val result = JokerRunner.run(
+            context = this,
+            manager = AdbConnectionManager.get(this),
+            info = info,
+            onLine = ::logLine,
+        )
+        if (result.refused) {
+            return getString(R.string.exploit_exit_code, result.exitCode)
+        }
+        ExploitMemory.record(this, info.kernel, result.rooted, ExploitMemory.ENGINE_PCT)
+        if (!result.rooted) {
+            return getString(R.string.exploit_exit_code, result.exitCode)
+        }
+        if (ksud == null) {
+            runOnUiThread { commandMode.value = true }
+            return getString(R.string.exploit_root_ready)
+        }
+        val opened = KsuManager.launchWithRetry(
+            context = this,
+            manager = AdbConnectionManager.get(this),
+            packageName = ksud.packageName,
+            log = ::logLine,
+        )
+        return getString(if (opened) R.string.exploit_ksu_opened else R.string.exploit_ksu_manual)
+    }
+
+    /**
+     * The OPPO Reno7 5G port of CVE-2026-43499.
+     *
+     * Success is a loaded `kernelsu.ko`, not a `su` that works this second: the payload swaps the
+     * target's cred for `init_cred`, clears `task_struct.seccomp` and insmods a module built for
+     * this exact kernel. Root afterwards is whatever that manager hands out, so the manager is
+     * what gets opened — claiming "rooted" here would be true for as long as the process lives.
+     */
+    private fun runGhostLock54Engine(): String {
+        val manager = AdbConnectionManager.get(this)
+        reportProgress(0.1f)
+        val result = GhostLock54Runner.run(
+            context = this,
+            manager = manager,
+            log = ::logLine,
+        )
+        reportProgress(1f)
+        if (!result.moduleLoaded) return result.detail
+        val opened = KsuManager.launchWithRetry(
+            context = this,
+            manager = manager,
+            packageName = GhostLock54Runner.KSUN_PACKAGE,
+            log = ::logLine,
+        )
+        return getString(if (opened) R.string.exploit_ksu_opened else R.string.exploit_ksu_manual)
+    }
+
+    /**
+     * Installs the manager that pairs with what just loaded and brings it to the front.
+     *
+     * Done off the main thread: the APK is fetched from a mirror over the shell channel and then
+     * `pm install`ed, which takes seconds. The returned line is what the caller shows; the log
+     * carries the step that failed, including where the APK was left when `pm` refuses.
+     */
+    private fun openMagiskManager(flavor: MagiskManager.Flavor): String {
+        val manager = AdbConnectionManager.get(this)
+        Thread({
+            runCatching {
+                val result = MagiskManager.install(manager, flavor, ::logLine)
+                if (result.ok) {
+                    MagiskManager.launch(manager, ::logLine)
+                } else {
+                    logLine("<e> ${result.message}")
+                }
+            }.onFailure { error -> logLine("<e> ${error.message}") }
+        }, "magisk-manager").start()
+        return getString(
+            if (flavor == MagiskManager.Flavor.LEGACY) R.string.exploit_magisk_legacy
+            else R.string.exploit_magisk
+        )
+    }
+
+    /**
+     * LSPromise: stage the three payloads, then run the half a shell can run.
+     *
+     * The result sentence is deliberately not a failure message when the syscall is unreachable.
+     * Nothing broke: the chain needs Java-side objects that only exist in the app process, and this
+     * shell-driven model cannot create them. The log names the missing step so the limit is
+     * visible instead of looking like a failed exploit.
+     */
+    private fun runLSPromiseEngine(): String {
+        val manager = AdbConnectionManager.get(this)
+        reportProgress(0.15f)
+        if (!LSPromise.pushAssets(this, manager, ::logLine)) {
+            return getString(R.string.lspromise_not_staged)
+        }
+        reportProgress(0.4f)
+        if (!LSPromise.prepare(manager, ::logLine)) {
+            return getString(R.string.lspromise_not_staged)
+        }
+        reportProgress(0.6f)
+        val result = LSPromise.run(manager, ::logLine)
+        reportProgress(1f)
+        return when {
+            result.syscallReachable -> getString(R.string.lspromise_reached)
+            result.daemonUp -> getString(R.string.lspromise_stopped, result.detail)
+            else -> result.detail
+        }
+    }
+
+    /**
+     * CVE-2024-31317: the prerequisite row.
+     *
+     * It returns a sentence, never a root report, because there is no root to report. What it does
+     * change is [zygoteReady], which the row reads back so a second run does not look identical to
+     * a first one that failed.
+     */
+    private fun runZygoteEngine(): String {
+        val manager = AdbConnectionManager.get(this)
+        // The payload writes this file itself, so it is the one honest success signal available.
+        val marker = "/data/local/tmp/openroot/31317-ok"
+        val command = "mkdir -p /data/local/tmp/openroot; " +
+            "printf 'uid=%s\\nseinfo=%s\\n' \"\$(id -u)\" \"\$(cat /proc/self/attr/current)\" > $marker"
+
+        logLine("<i> ${getString(R.string.zygote_injecting)}")
+        reportProgress(0.2f)
+        val ok = Zygote31317.inject(
+            manager = manager,
+            uid = 1000,
+            seinfo = "system_app",
+            command = command,
+            log = ::logLine,
+        )
+        reportProgress(1f)
+        runOnUiThread { zygoteReady.value = ok }
+        if (!ok) {
+            logLine("<e> ${getString(R.string.zygote_failed)}")
+            return getString(R.string.zygote_failed)
+        }
+        /* The key was restored inside `inject`, so nothing is left behind to fix. Saying so is worth
+         * a line: a user who has read about 31317 expects the dangerous write, not the cleanup. */
+        logLine("<i> ${getString(R.string.zygote_restored)}")
+        return getString(R.string.zygote_ran)
+    }
+
+    /**
+     * Bootless MediaTek root: `mtk-su`, then Magisk 20.4 into `/sbin`.
+     *
+     * - the arch half comes from the probe, which reads the device's own ABI list, because
+     *   `mtk-su32` and `mtk-su64` are different binaries and the wrong one dies with
+     *   `exec format error`;
+     * - there is no KernelSU manager to open afterwards. Success means `/sbin/su` exists, and the
+     *   manager to install is the legacy one, which [reportHandoff] picks from the payload tag.
+     */
+    private fun runMediatekEngine(): String {
+        val manager = AdbConnectionManager.get(this)
+        val use64 = mtkProbe.value?.use64 ?: true
+        logLine("<i> MediaTek payload, ${if (use64) "64" else "32"}-bit half")
+        reportProgress(0.15f)
+        val ok = MtkEasySu.run(
+            context = this,
+            manager = manager,
+            use64 = use64,
+            log = ::logLine,
+            timeoutMs = 180_000L,
+        )
+        reportProgress(1f)
+        if (!ok) return getString(R.string.engine_mtk_failed)
+        /* Success is a live Magisk, reported through the same handoff the kernel engines use. The
+         * marker is read back rather than assumed: `magisk-boot.sh` exits 0 in some failure modes,
+         * so `/dev/dfmm1` is what the app actually believes. */
+        return reportHandoff(
+            ksud = null,
+            handoff = RootHandoff.probe(manager, ::logLine, waitMs = 8_000),
+            exitCode = 0,
+        )
+    }
+
+    /**
+     * CVE-2020-0041: same shape as the GPU engine, but the payload is profile-driven, so the
+     * runner stages an offset file next to the binary. One binary covers plain 5.4 and 5.4-qgki;
+     * which kernel it targets is decided entirely by that profile.
+     */
+    private fun runBinderEngine(info: DeviceInfo, ksud: KsuManager.Target?): String {
+        val result = BinderBombRunner.run(
+            context = this,
+            manager = AdbConnectionManager.get(this),
+            kernelRelease = info.kernel,
+            suManager = ksud,
+            onLine = ::logLine,
+            onProgress = ::reportProgress,
+        )
+        ExploitMemory.record(this, info.kernel, result.handoff.rooted, ExploitMemory.ENGINE_BINDER)
+        return reportHandoff(ksud, result.handoff, result.exitCode)
+    }
+
+    /**
+     * One Shark port: stage its binaries, run the shipped driver, report what it said.
+     *
+     * The driver owns the whole flow, including the KernelSU handoff, so this engine does not try
+     * to interpret progress. Success is decided the way the driver reports it: the last step ends
+     * with `id` printing `uid=0`.
+     */
+    private fun runSharkEngine(
+        info: DeviceInfo,
+        engine: SharkRunner.Engine,
+        ksud: KsuManager.Target?,
+    ): String {
+        val result = SharkRunner.run(
+            context = this,
+            manager = AdbConnectionManager.get(this),
+            engine = engine,
+            info = info,
+            ksudPath = ksud?.ksudPath,
+            onLine = ::logLine,
+        )
+        if (result.refused) {
+            return getString(R.string.exploit_exit_code, result.exitCode)
+        }
+        val rooted = result.output.lineSequence().any { it.contains("uid=0") }
+        ExploitMemory.record(this, info.kernel, rooted, engine.id)
+        if (!rooted) {
+            return getString(R.string.exploit_exit_code, result.exitCode)
+        }
+        // The driver already tried its own late-load and manager install; all that is left is to
+        // surface whichever surface the user ends up with, the same way every other engine does.
+        if (ksud == null) {
+            runOnUiThread { commandMode.value = true }
+            return getString(R.string.exploit_root_ready)
+        }
+        val opened = KsuManager.launchWithRetry(
+            context = this,
+            manager = AdbConnectionManager.get(this),
+            packageName = ksud.packageName,
+            log = ::logLine,
+        )
+        return getString(if (opened) R.string.exploit_ksu_opened else R.string.exploit_ksu_manual)
+    }
+
     /** CVE-2026-43284: the module is loaded by the kernel; bootstrap and ksud are staged over ADB. */
     private fun runPageCacheEngine(
         info: DeviceInfo,
@@ -1515,6 +2149,13 @@ class MainActivity : AppCompatActivity() {
                 )
                 getString(if (opened) R.string.exploit_ksu_opened else R.string.exploit_ksu_manual)
             }
+            /*
+             * No matching ko for this kernel, so the payload fell back to Magisk. The pairing is not
+             * free: the MediaTek path leaves Magisk 20.4 in /sbin, which only the legacy manager
+             * understands, and a modern manager would offer an "update" that bricks a locked device.
+             */
+            RootHandoff.State.MAGISK, RootHandoff.State.MAGISK_LEGACY ->
+                openMagiskManager(MagiskManager.flavorFor(handoff.payload))
             RootHandoff.State.COMMAND -> {
                 runOnUiThread { commandMode.value = true }
                 getString(R.string.exploit_root_ready)
@@ -1689,7 +2330,7 @@ class MainActivity : AppCompatActivity() {
     private fun exportOffsets() {
         val doc = runCatching { buildExportDocument() }.getOrElse { e ->
             logLine("[!] export failed: ${e.message}")
-            toastText("Export failed: ${e.message}")
+            toastText(getString(R.string.export_failed, e.message.orEmpty()))
             null
         } ?: return
         pendingExport = doc
@@ -1762,13 +2403,13 @@ class MainActivity : AppCompatActivity() {
                 logLine("[~] imported release differs from this device's $running; verify it is " +
                     "the right profile before running - pick another under Built-in offset tables")
             }
-            toastText("Offsets imported and activated")
+            toastText(getString(R.string.offsets_imported))
         } catch (e: OffsetsError) {
             logLine("[!] import refused: ${e.message}")
-            toastText("Import refused: ${e.message}")
+            toastText(getString(R.string.import_refused, e.message.orEmpty()))
         } catch (e: Exception) {
             logLine("[!] import failed: ${e.message}")
-            toastText("Import failed: ${e.message}")
+            toastText(getString(R.string.import_failed, e.message.orEmpty()))
         }
     }
 
@@ -1788,7 +2429,7 @@ class MainActivity : AppCompatActivity() {
         refreshParsedProfiles()
         // The support state depends on which profiles exist, so the home screen has to see it.
         refreshState()
-        Toast.makeText(this, "Profile saved", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, R.string.profile_saved, Toast.LENGTH_SHORT).show()
     }
 
     /** Selected by tapping a parsed row in the Profile tab; becomes the profile Run uses. */

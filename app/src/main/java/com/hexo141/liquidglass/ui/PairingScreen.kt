@@ -105,11 +105,11 @@ fun PairingScreen(
     val showPairingButton = !paired || needsPairing
 
     val statusText = when {
-        connecting -> "Connecting…"
-        shizukuReady && !paired -> "Connected via Shizuku"
-        connected -> "Connected"
-        paired -> "Waiting for adbd"
-        else -> "Not paired"
+        connecting -> stringResource(R.string.status_connecting)
+        shizukuReady && !paired -> stringResource(R.string.status_shizuku)
+        connected -> stringResource(R.string.status_connected)
+        paired -> stringResource(R.string.status_waiting_adbd)
+        else -> stringResource(R.string.status_not_paired)
     }
 
     Box(modifier.fillMaxSize()) {
@@ -229,7 +229,9 @@ fun PairingScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     BasicText(
-                        text = if (exploiting) "Exploit running - open log" else "Open exploit log",
+                        text = stringResource(
+                            if (exploiting) R.string.exploit_log_running else R.string.exploit_log_open
+                        ),
                         style = buttonTextStyle()
                     )
                 }

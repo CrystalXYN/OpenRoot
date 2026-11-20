@@ -1,5 +1,6 @@
 package com.hexo141.liquidglass.ui
 
+import com.hexo141.liquidglass.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -104,7 +106,7 @@ fun KaslrSlideCard(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(
-                text = "KASLR slide",
+                text = stringResource(R.string.kaslr_title),
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.95f),
                     fontSize = 19.sp,
@@ -146,7 +148,8 @@ fun KaslrSlideCard(
                 isInteractive = !busy,
             ) {
                 BasicText(
-                    text = if (busy) "Resolving…" else "Get Slide",
+                    text = if (busy) stringResource(R.string.kaslr_resolving)
+                    else stringResource(R.string.kaslr_get),
                     style = TextStyle(color = Color.White, fontSize = 12.sp, shadow = cardShadow)
                 )
             }
@@ -158,7 +161,8 @@ fun KaslrSlideCard(
                 horizontalPadding = 14.dp,
             ) {
                 BasicText(
-                    text = if (manualOpen) "Manual · close" else "Manual",
+                    text = if (manualOpen) stringResource(R.string.kaslr_manual_close)
+                    else stringResource(R.string.kaslr_manual),
                     style = TextStyle(color = Color.White, fontSize = 12.sp, shadow = cardShadow)
                 )
             }
@@ -202,7 +206,7 @@ fun KaslrSlideCard(
                             Box(Modifier.fillMaxWidth()) {
                                 if (text.isEmpty()) {
                                     BasicText(
-                                        text = "0x…",
+                                        text = stringResource(R.string.kaslr_hex_hint),
                                         style = TextStyle(
                                             color = Color.White.copy(alpha = 0.35f),
                                             fontSize = 13.sp,
@@ -224,7 +228,7 @@ fun KaslrSlideCard(
                     isInteractive = !busy,
                 ) {
                     BasicText(
-                        text = "Set",
+                        text = stringResource(R.string.kaslr_set),
                         style = TextStyle(color = Color.White, fontSize = 12.sp, shadow = cardShadow)
                     )
                 }

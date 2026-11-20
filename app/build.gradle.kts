@@ -141,13 +141,63 @@ val buildNativePosix = tasks.register<Exec>("buildNativePosix") {
     outputs.dir(rootProject.layout.buildDirectory.dir("posix"))
 }
 
+/**
+ * CVE-2020-0041: the binder out-of-bounds write payload for plain 5.4 and 5.4-qgki.
+ *
+ * Built with `ndk-build` rather than the hand-written Makefiles the other payloads use, because
+ * that is what the upstream PoC ships with; `Android.mk` names the module `binder54` and
+ * `Application.mk` pins arm64-v8a.
+ */
+val buildNativeBinder54 = tasks.register<Exec>("buildNativeBinder54") {
+    group = "build"
+    description = "Compiles the arm64 binder OOB-write payload with the NDK"
+    workingDir = rootProject.layout.projectDirectory.dir("native-binder54").asFile
+    val ndkBuild = "$ndkDir/ndk-build"
+    commandLine(
+        if (System.getProperty("os.name").lowercase().contains("win")) "$ndkBuild.cmd" else ndkBuild,
+        "-j4",
+        "NDK_PROJECT_PATH=.",
+        "APP_BUILD_SCRIPT=Android.mk",
+        "NDK_APPLICATION_MK=Application.mk",
+        "NDK_OUT=build/obj",
+        "NDK_LIBS_OUT=build/libs",
+    )
+    inputs.dir(rootProject.layout.projectDirectory.dir("native-binder54"))
+    // ndk-build writes executables under `$NDK_LIBS_OUT/<abi>/`, relative to the working directory.
+    outputs.file(
+        rootProject.layout.projectDirectory.file("native-binder54/build/libs/arm64-v8a/binder54"),
+    )
+}
+
+/**
+ * The OPPO Reno7 5G port of CVE-2026-43499.
+ *
+ * Its own directory and task: unlike [buildNativeExploit], which compiles the upstream engine for
+ * whichever `uname -r` the bundled profiles know, this one is a single hand-ported build for
+ * `5.4.254-qgki-gaa96eae94d32` with the offsets baked into the C. It also links libselinux.
+ */
+val buildNativeGhost54 = tasks.register<Exec>("buildNativeGhost54") {
+    group = "build"
+    description = "Compiles the arm64 GhostLock54 payload for the OPPO Reno7 5G"
+    workingDir = rootProject.layout.projectDirectory.dir("native-ghost54").asFile
+    commandLine(ndkMake, "all", "-j4")
+    environment("NDK_ROOT", ndkDir)
+    inputs.dir(rootProject.layout.projectDirectory.dir("native-ghost54"))
+    // The Makefile writes to `../build/ghost54`, which resolves against the working directory
+    // above, i.e. the *root* project's build dir. Naming this module's layout.buildDirectory would
+    // describe an output Gradle considers already produced, and the copy step would package
+    // nothing — CI reported exactly that as
+    // `llvm-strip: .../jniLibs/arm64-v8a/libghostlock54.so: No such file or directory`.
+    outputs.dir(rootProject.layout.buildDirectory.dir("ghost54"))
+}
+
 /** The only task that writes into jniLibs. */
 val prepareNativePayloads = tasks.register<Copy>("prepareNativePayloads") {
     group = "build"
     description = "Copies every payload into jniLibs"
     dependsOn(
         buildNativeExploit, buildNativePageCache, buildNativeGpu, buildNativePct,
-        buildNativePosix,
+        buildNativePosix, buildNativeGhost54, buildNativeBinder54,
     )
     from(rootProject.layout.buildDirectory.file("native/ghostlock")) {
         rename { "libghostlock.so" }
@@ -164,6 +214,17 @@ val prepareNativePayloads = tasks.register<Copy>("prepareNativePayloads") {
     from(rootProject.layout.buildDirectory.dir("posix")) {
         include("libcve98260.so")
     }
+    // Packaged under a library name for the same reason binder54 is: Android only unpacks
+    // `lib*.so` out of jniLibs, and the runner execs the file from nativeLibraryDir.
+    from(rootProject.layout.buildDirectory.dir("ghost54")) {
+        include("libghostlock54.so")
+    }
+    // Same reason as ghostlock54: Android only unpacks `lib*.so` from jniLibs, so the executable
+    // is packaged under a library name and the runner execs it from nativeLibraryDir.
+    from(rootProject.layout.projectDirectory.dir("native-binder54/build/libs/arm64-v8a")) {
+        include("binder54")
+        rename { "libbinder54.so" }
+    }
     into(jniLibsDir)
 }
 
@@ -179,6 +240,8 @@ val stripNativePayloads = tasks.register<Exec>("stripNativePayloads") {
         "libcheese-snapdragon.so",
         "libpct-opace6.so",
         "libcve98260.so",
+        "libghostlock54.so",
+        "libbinder54.so",
     ).map { jniLibsDir.file(it).asFile.absolutePath }
     commandLine(listOf(ndkStrip, "--strip-all") + targets)
     inputs.files(targets.map { File(it) })

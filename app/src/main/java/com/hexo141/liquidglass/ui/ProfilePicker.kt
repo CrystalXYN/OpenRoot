@@ -1,5 +1,6 @@
 package com.hexo141.liquidglass.ui
 
+import com.hexo141.liquidglass.R
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -24,6 +25,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -132,7 +134,7 @@ fun ProfilePicker(
             )
             Spacer(Modifier.height(12.dp))
             BasicText(
-                text = "Select profile",
+                text = stringResource(R.string.profile_picker_title),
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.95f),
                     fontSize = 18.sp,
@@ -142,9 +144,7 @@ fun ProfilePicker(
             )
             Spacer(Modifier.height(3.dp))
             BasicText(
-                text = "Parsed on this device or one of the offset tables bundled with OpenRoot. " +
-                    "Handed to CVE-2026-43499 as-is: a profile from another build carries the " +
-                    "wrong offsets and may fault the kernel.",
+                text = stringResource(R.string.profile_picker_note),
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.55f),
                     fontSize = 11.sp,
@@ -156,7 +156,7 @@ fun ProfilePicker(
 
             if (options.isEmpty()) {
                 BasicText(
-                    text = "No profiles are available in this APK; parse a boot.img first.",
+                    text = stringResource(R.string.profile_picker_empty),
                     style = TextStyle(
                         color = Color.White.copy(alpha = 0.5f),
                         fontSize = 12.sp,
@@ -189,7 +189,7 @@ fun ProfilePicker(
                         .padding(horizontal = 18.dp, vertical = 9.dp)
                 ) {
                     BasicText(
-                        text = "Cancel",
+                        text = stringResource(R.string.common_cancel),
                         style = TextStyle(
                             color = Color.White.copy(alpha = 0.9f),
                             fontSize = 13.sp,
@@ -236,9 +236,15 @@ private fun ProfileRow(option: ProfileOption, onClick: () -> Unit) {
         }
         Spacer(Modifier.width(10.dp))
         when {
-            option.selected -> Badge("Selected", Color(0xFF56D364))
-            option.current -> Badge("This kernel", Color(0xFFFBBF24))
-            option.bundled -> Badge("bundled", Color.White.copy(alpha = 0.45f))
+            option.selected -> Badge(
+                stringResource(R.string.profile_selected_badge), Color(0xFF56D364)
+            )
+            option.current -> Badge(
+                stringResource(R.string.profile_picker_this_kernel), Color(0xFFFBBF24)
+            )
+            option.bundled -> Badge(
+                stringResource(R.string.profile_badge_bundled), Color.White.copy(alpha = 0.45f)
+            )
         }
     }
 }

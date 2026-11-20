@@ -2,6 +2,7 @@ package com.hexo141.liquidglass
 
 import android.app.Application
 import android.content.Context
+import com.hexo141.liquidglass.i18n.LocaleManager
 import rikka.shizuku.ShizukuProvider
 
 /**
@@ -19,5 +20,12 @@ class App : Application() {
     override fun attachBaseContext(base: Context) {
         runCatching { ShizukuProvider.disableAutomaticSuiInitialization() }
         super.attachBaseContext(base)
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Put the saved language override in place before the first view inflates, otherwise the
+        // launch screen paints in the device language and swaps a frame later.
+        runCatching { LocaleManager.restore(this) }
     }
 }

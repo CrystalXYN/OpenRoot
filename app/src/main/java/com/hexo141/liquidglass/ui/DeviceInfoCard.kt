@@ -1,5 +1,6 @@
 package com.hexo141.liquidglass.ui
 
+import com.hexo141.liquidglass.R
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -69,7 +71,7 @@ fun DeviceInfoCards(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             InfoTile(
-                label = "Device",
+                label = stringResource(R.string.info_device),
                 value = info.deviceName,
                 backdrop = backdrop,
                 surfaceColor = surfaceColor,
@@ -92,7 +94,7 @@ fun DeviceInfoCards(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             InfoTile(
-                label = "Android",
+                label = stringResource(R.string.info_android),
                 value = info.androidVersion,
                 backdrop = backdrop,
                 surfaceColor = surfaceColor,
@@ -118,7 +120,7 @@ fun DeviceInfoCards(
             modifier = Modifier.fillMaxWidth()
         )
         InfoTile(
-            label = "Kernel",
+            label = stringResource(R.string.info_kernel),
             value = info.kernel,
             backdrop = backdrop,
             surfaceColor = surfaceColor,

@@ -1,5 +1,6 @@
 package com.hexo141.liquidglass.ui
 
+import com.hexo141.liquidglass.R
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -19,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -53,6 +55,13 @@ data class ExploitChoice(
      */
     val fixLabel: String? = null,
     val onFix: (() -> Unit)? = null,
+    /**
+     * A second action on an enabled row, for the one payload that shares its CVE with another but
+     * deliberately stops short - CVE-2026-98260's `--selinux-only` run. It sits above Run as a
+     * quiet chip so the two entry points stay a single row instead of two.
+     */
+    val altLabel: String? = null,
+    val onAlt: (() -> Unit)? = null,
 )
 
 /**
@@ -118,7 +127,7 @@ fun EnginePicker(
                 .padding(vertical = 18.dp, horizontal = 18.dp)
         ) {
             BasicText(
-                text = "Select vulnerability",
+                text = stringResource(R.string.picker_select_vulnerability),
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.95f),
                     fontSize = 19.sp,
@@ -173,11 +182,23 @@ fun EnginePicker(
                         }
                         Spacer(Modifier.width(12.dp))
                         when {
-                            choice.enabled -> PickerButton(text = "Run") { onPick(choice.id) }
+                            // The alternate action stacks above Run rather than beside it: two
+                            // capsules side by side would eat the space the title needs.
+                            choice.enabled && choice.altLabel != null && choice.onAlt != null ->
+                                Column(horizontalAlignment = Alignment.End) {
+                                    PickerChip(text = choice.altLabel, onClick = choice.onAlt)
+                                    Spacer(Modifier.height(6.dp))
+                                    PickerButton(text = stringResource(R.string.picker_run)) {
+                                        onPick(choice.id)
+                                    }
+                                }
+                            choice.enabled -> PickerButton(text = stringResource(R.string.picker_run)) {
+                                onPick(choice.id)
+                            }
                             choice.fixLabel != null && choice.onFix != null ->
                                 PickerChip(text = choice.fixLabel, onClick = choice.onFix)
                             else -> BasicText(
-                                text = "Unavailable",
+                                text = stringResource(R.string.picker_unavailable),
                                 style = TextStyle(
                                     color = Color.White.copy(alpha = 0.3f),
                                     fontSize = 13.sp,
@@ -193,7 +214,7 @@ fun EnginePicker(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
             ) {
-                PickerButton(text = "Cancel", onClick = onDismiss)
+                PickerButton(text = stringResource(R.string.common_cancel), onClick = onDismiss)
             }
         }
     }

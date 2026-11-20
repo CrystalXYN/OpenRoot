@@ -1,5 +1,7 @@
 package com.hexo141.liquidglass.ui
 
+import com.hexo141.liquidglass.R
+import androidx.compose.ui.res.stringResource
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.animation.core.animateFloatAsState
@@ -118,7 +120,7 @@ fun ConsentScreen(
                 )
                 Spacer(Modifier.weight(1f))
                 BasicText(
-                    text = "Step ${step + 1} of 2",
+                    text = stringResource(R.string.consent_step, step + 1),
                     style = TextStyle(
                         color = Color.White.copy(alpha = 0.6f),
                         fontSize = 12.sp
@@ -147,9 +149,9 @@ fun ConsentScreen(
 
             BasicText(
                 text = if (onLicenseStep) {
-                    "Document 1 of 2 · licence of this software"
+                    stringResource(R.string.consent_doc1)
                 } else {
-                    "Document 2 of 2 · what temporary root means for your device"
+                    stringResource(R.string.consent_doc2)
                 },
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.72f),
@@ -185,9 +187,9 @@ fun ConsentScreen(
                     )
                     BasicText(
                         text = when {
-                            !onLicenseStep -> "Bundled with this build. Read it in full."
-                            license == null -> "Fetching the licence text from both mirrors…"
-                            else -> "Text source: ${license?.source}"
+                            !onLicenseStep -> stringResource(R.string.consent_bundled)
+                            license == null -> stringResource(R.string.consent_fetching)
+                            else -> stringResource(R.string.consent_source, license?.source.orEmpty())
                         },
                         style = TextStyle(
                             color = Color.White.copy(alpha = 0.5f),
@@ -218,9 +220,9 @@ fun ConsentScreen(
                         checked = acceptedHere,
                         enabled = readyHere,
                         label = if (onLicenseStep) {
-                            "I have read and accept the GNU General Public License v3.0"
+                            stringResource(R.string.consent_accept_gpl)
                         } else {
-                            "I have read and accept the temporary root disclaimer"
+                            stringResource(R.string.consent_accept_disclaimer)
                         },
                         onChecked = {
                             if (onLicenseStep) licenseAccepted = it else disclaimerAccepted = it
@@ -246,7 +248,7 @@ fun ConsentScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         BasicText(
-                            text = "Back",
+                            text = stringResource(R.string.common_back),
                             style = TextStyle(
                                 color = Color.White.copy(alpha = 0.85f),
                                 fontSize = 14.sp,
@@ -271,7 +273,8 @@ fun ConsentScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     BasicText(
-                        text = if (onLicenseStep) "Continue" else "Accept and continue",
+                        text = if (onLicenseStep) stringResource(R.string.consent_continue)
+                            else stringResource(R.string.consent_accept),
                         style = TextStyle(
                             color = Color.White.copy(alpha = if (acceptedHere) 1f else 0.45f),
                             fontSize = 15.sp,
@@ -283,9 +286,9 @@ fun ConsentScreen(
             Spacer(Modifier.height(6.dp))
             BasicText(
                 text = if (onLicenseStep) {
-                    "The licence has to be accepted before the next document."
+                    stringResource(R.string.consent_licence_required)
                 } else {
-                    "Accepting is stored on this device only."
+                    stringResource(R.string.consent_stored_local)
                 },
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.45f),

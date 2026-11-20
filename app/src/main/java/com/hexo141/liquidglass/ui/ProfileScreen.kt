@@ -1,5 +1,7 @@
 package com.hexo141.liquidglass.ui
 
+import com.hexo141.liquidglass.R
+import androidx.compose.ui.res.stringResource
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -77,7 +79,7 @@ fun ProfileScreen(
     parsed: List<ProfileStore.Entry>,
     parseState: BootParseState,
     onPickImage: () -> Unit,
-    /** MTK devices: pick `boot.img` and `vendor_boot.img` together. */
+    /** MTK devices: `boot.img` first; `vendor_boot.img` is optional. */
     onPickMtkImage: () -> Unit,
     /** Parse an OTA / boot.img URL directly, downloading only the needed HTTP ranges. */
     onParseUrl: (String) -> Unit,
@@ -106,7 +108,7 @@ fun ProfileScreen(
             .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = BottomBarSpace + 16.dp)
     ) {
         BasicText(
-            text = "Profile",
+            text = stringResource(R.string.tab_profile),
             style = TextStyle(
                 color = Color.White,
                 fontSize = 30.sp,
@@ -118,11 +120,10 @@ fun ProfileScreen(
 
         // ---------------------------------------------------------------- built-in offset tables
         GlassCard(backdrop, surfaceColor) {
-            SectionLabel("Built-in offset tables")
+            SectionLabel(stringResource(R.string.profile_section_tables))
             Spacer(Modifier.height(6.dp))
             BasicText(
-                text = "Offset tables shipped inside the APK. Pick any of them instead of the " +
-                    "automatic match with this device's kernel; the one you pick is what Run uses.",
+                text = stringResource(R.string.profile_tables_note),
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.7f),
                     fontSize = 11.sp,
@@ -140,14 +141,14 @@ fun ProfileScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 BasicText(
-                    text = "Choose a built-in profile",
+                    text = stringResource(R.string.profile_choose_builtin),
                     style = TextStyle(color = Color.White, fontSize = 14.sp, shadow = profileShadow)
                 )
             }
             if (!selectedRelease.isNullOrEmpty()) {
                 Spacer(Modifier.height(10.dp))
                 BasicText(
-                    text = "Selected: $selectedRelease",
+                    text = stringResource(R.string.profile_selected, selectedRelease),
                     style = TextStyle(
                         color = profileAccent,
                         fontSize = 11.sp,
@@ -164,17 +165,10 @@ fun ProfileScreen(
 
         // ---------------------------------------------------------------- parse a boot.img
         GlassCard(backdrop, surfaceColor) {
-            SectionLabel("Boot image")
+            SectionLabel(stringResource(R.string.profile_section_boot))
             Spacer(Modifier.height(8.dp))
             BasicText(
-                text = "Struct offsets come from BTF, symbol addresses from kallsyms. " +
-                    "Run tuning is taken from the closest bundled profile. " +
-                    "One parse also feeds the CVE-2026-98260 offsets, which need link-time " +
-                    "addresses instead of image offsets. " +
-                    "An OTA zip or payload.bin works directly: the boot partition is pulled out " +
-                    "in place, without unpacking the whole package. " +
-                    "MTK builds: pick boot.img, then vendor_boot.img; the kernel is taken from " +
-                    "whichever one holds it.",
+                text = stringResource(R.string.profile_parse_note),
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.7f),
                     fontSize = 11.sp,
@@ -193,8 +187,8 @@ fun ProfileScreen(
             ) {
                 BasicText(
                     text = when (parseState) {
-                        is BootParseState.Running -> "Parsing…"
-                        else -> "Select boot.img or OTA zip"
+                        is BootParseState.Running -> stringResource(R.string.profile_parsing)
+                        else -> stringResource(R.string.profile_select_boot)
                     },
                     style = TextStyle(color = Color.White, fontSize = 14.sp, shadow = profileShadow)
                 )
@@ -209,7 +203,7 @@ fun ProfileScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 BasicText(
-                    text = "Select boot.img + vendor_boot.img (MTK)",
+                    text = stringResource(R.string.profile_select_mtk),
                     style = TextStyle(color = Color.White, fontSize = 12.sp, shadow = profileShadow),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -217,10 +211,7 @@ fun ProfileScreen(
             }
             Spacer(Modifier.height(12.dp))
             BasicText(
-                text = "Or paste an OTA link: a full OTA zip, a payload.bin, or a boot.img. " +
-                    "Only the byte ranges the parser needs are downloaded, so the server must " +
-                    "honor HTTP Range. Delta OTAs are refused. Use https:// - cleartext HTTP is " +
-                    "blocked on Android 9 and newer.",
+                text = stringResource(R.string.profile_ota_note),
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.7f),
                     fontSize = 11.sp,
@@ -235,9 +226,7 @@ fun ProfileScreen(
             )
             Spacer(Modifier.height(8.dp))
             BasicText(
-                text = "Offsets are portable: export the parsed values to a JSON file, or import " +
-                    "one without re-reading the boot image. The file records where each field " +
-                    "came from; files carrying borrowed absolute addresses are refused.",
+                text = stringResource(R.string.profile_portable_note),
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.7f),
                     fontSize = 11.sp,
@@ -256,7 +245,7 @@ fun ProfileScreen(
                     modifier = Modifier.weight(1f)
                 ) {
                     BasicText(
-                        text = "Export offsets",
+                        text = stringResource(R.string.profile_export),
                         style = TextStyle(color = Color.White, fontSize = 13.sp, shadow = profileShadow)
                     )
                 }
@@ -269,7 +258,7 @@ fun ProfileScreen(
                     modifier = Modifier.weight(1f)
                 ) {
                     BasicText(
-                        text = "Import offsets",
+                        text = stringResource(R.string.profile_import),
                         style = TextStyle(color = Color.White, fontSize = 13.sp, shadow = profileShadow)
                     )
                 }
@@ -278,7 +267,7 @@ fun ProfileScreen(
                 BootParseState.Idle -> Unit
                 is BootParseState.Running -> {
                     Spacer(Modifier.height(10.dp))
-                    StatusLine("Reading ${parseState.fileName}…", warn = false)
+                    StatusLine(stringResource(R.string.profile_reading, parseState.fileName), warn = false)
                 }
                 is BootParseState.Failed -> {
                     Spacer(Modifier.height(10.dp))
@@ -298,11 +287,11 @@ fun ProfileScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             BasicText(
-                                text = "Save",
+                                text = stringResource(R.string.common_save),
                                 style = TextStyle(color = Color.White, fontSize = 13.sp, shadow = profileShadow)
                             )
                         }
-                        TextAction("Discard", subdued = false, onClick = onDiscardParsed)
+                        TextAction(stringResource(R.string.common_discard), subdued = false, onClick = onDiscardParsed)
                     }
                 }
             }
@@ -312,11 +301,11 @@ fun ProfileScreen(
 
         // ---------------------------------------------------------------- parsed profiles
         GlassCard(backdrop, surfaceColor) {
-            SectionLabel("Parsed on this device")
+            SectionLabel(stringResource(R.string.profile_section_parsed))
             Spacer(Modifier.height(8.dp))
             if (parsed.isEmpty()) {
                 BasicText(
-                    text = "Nothing yet. Parse a boot.img or an OTA to add one.",
+                    text = stringResource(R.string.profile_parsed_empty),
                     style = TextStyle(
                         color = Color.White.copy(alpha = 0.6f),
                         fontSize = 11.sp,
@@ -338,8 +327,7 @@ fun ProfileScreen(
 
         Spacer(Modifier.height(12.dp))
         BasicText(
-            text = "A profile with wrong offsets fails the run instead of gaining root. " +
-                "Treat a new profile as unverified until one run succeeds.",
+            text = stringResource(R.string.profile_verify_note),
             style = TextStyle(
                 color = Color.White.copy(alpha = 0.55f),
                 fontSize = 11.sp,
@@ -372,14 +360,18 @@ private fun ParsedSummary(image: ParsedBootImage, deviceKernel: String?) {
         if (!deviceKernel.isNullOrEmpty() && deviceKernel != image.release) {
             Spacer(Modifier.height(6.dp))
             StatusLine(
-                "This device reports $deviceKernel; the profile only applies to its own release.",
+                stringResource(R.string.profile_kernel_mismatch, deviceKernel),
                 warn = true
             )
         }
         Spacer(Modifier.height(6.dp))
         BasicText(
-            text = "${image.derivedCount} fields read from the image, " +
-                "${image.inheritedCount} from ${image.templateRelease}",
+            text = stringResource(
+                R.string.profile_fields,
+                image.derivedCount,
+                image.inheritedCount,
+                image.templateRelease
+            ),
             style = TextStyle(
                 color = Color.White.copy(alpha = 0.62f),
                 fontSize = 11.sp,
@@ -389,7 +381,10 @@ private fun ParsedSummary(image: ParsedBootImage, deviceKernel: String?) {
         )
         if (image.missing.isNotEmpty()) {
             Spacer(Modifier.height(6.dp))
-            StatusLine("Missing: " + image.missing.joinToString(), warn = true)
+            StatusLine(
+                stringResource(R.string.profile_missing, image.missing.joinToString()),
+                warn = true
+            )
         }
         if (image.notes.isNotEmpty()) {
             Spacer(Modifier.height(6.dp))
@@ -398,7 +393,10 @@ private fun ParsedSummary(image: ParsedBootImage, deviceKernel: String?) {
         if (image.sections.isNotEmpty()) {
             var expanded by remember(image.release) { mutableStateOf(false) }
             Spacer(Modifier.height(8.dp))
-            TextAction(if (expanded) "Hide offsets" else "Show offsets") { expanded = !expanded }
+            TextAction(
+                if (expanded) stringResource(R.string.profile_hide_offsets)
+                else stringResource(R.string.profile_show_offsets)
+            ) { expanded = !expanded }
             if (expanded) {
                 Spacer(Modifier.height(8.dp))
                 Column {
@@ -462,8 +460,13 @@ private fun ParsedRow(
             Spacer(Modifier.height(3.dp))
             BasicText(
                 text = buildString {
-                    append(if (selected) "Selected" else "Tap to select")
-                    if (entry.sourceName.isNotEmpty()) append(" - from ${entry.sourceName}")
+                    append(if (selected) stringResource(R.string.profile_selected_badge)
+                        else stringResource(R.string.profile_tap_select))
+                    if (entry.sourceName.isNotEmpty()) {
+                        append(" ").append(
+                            stringResource(R.string.profile_from, entry.sourceName)
+                        )
+                    }
                     append(" - ").append(formatDate(entry.savedAt))
                 },
                 style = TextStyle(
@@ -478,7 +481,7 @@ private fun ParsedRow(
         if (selected) {
             Spacer(Modifier.width(8.dp))
             BasicText(
-                text = "Selected",
+                text = stringResource(R.string.profile_selected_badge),
                 style = TextStyle(
                     color = profileAccent,
                     fontSize = 12.sp,
@@ -492,7 +495,7 @@ private fun ParsedRow(
             )
         }
         Spacer(Modifier.width(8.dp))
-        TextAction("Delete", subdued = true, onClick = onDelete)
+        TextAction(stringResource(R.string.common_delete), subdued = true, onClick = onDelete)
     }
 }
 
@@ -614,7 +617,7 @@ private fun OtaUrlRow(onParseUrl: (String) -> Unit, enabled: Boolean) {
         }
         Spacer(Modifier.width(8.dp))
         BasicText(
-            text = "Parse",
+            text = stringResource(R.string.profile_parse),
             modifier = Modifier
                 .clickable(enabled = enabled) {
                     val link = text.trim()

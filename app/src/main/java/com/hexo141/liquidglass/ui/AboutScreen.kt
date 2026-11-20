@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -103,7 +104,7 @@ fun AboutScreen(
             .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = BottomBarSpace + 16.dp)
     ) {
         BasicText(
-            text = "About",
+            text = stringResource(R.string.tab_about),
             style = TextStyle(
                 color = Color.White,
                 fontSize = 30.sp,
@@ -164,8 +165,8 @@ fun AboutScreen(
             }
             Spacer(Modifier.height(10.dp))
             listOf(
-                "Wireless ADB pairing, no cable and no PC.",
-                "Runs a temporary root payload on supported kernels."
+                stringResource(R.string.about_tagline_pairing),
+                stringResource(R.string.about_tagline_root)
             ).forEach { line ->
                 BasicText(
                     text = line,
@@ -181,7 +182,7 @@ fun AboutScreen(
 
             Spacer(Modifier.height(6.dp))
             BasicText(
-                text = "Contributors",
+                text = stringResource(R.string.about_contributors),
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.62f),
                     fontSize = 11.sp,
@@ -208,7 +209,7 @@ fun AboutScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 BasicText(
-                    text = "Open on GitHub",
+                    text = stringResource(R.string.about_open_github),
                     style = TextStyle(
                         color = Color.White,
                         fontSize = 15.sp,
@@ -216,10 +217,15 @@ fun AboutScreen(
                     )
                 )
             }
+            Spacer(Modifier.height(12.dp))
+            // The picker sits inside the About card rather than on its own tab: language is a
+            // read-once setting, and a whole tab for three buttons would be a worse trade than one
+            // extra row here. LocaleManager.apply restarts the activity, so no state is hoisted.
+            LocaleRow()
         }
         Spacer(Modifier.height(12.dp))
         BasicText(
-            text = "Use it only on hardware you own.",
+            text = stringResource(R.string.about_disclaimer),
             style = TextStyle(
                 color = Color.White.copy(alpha = 0.55f),
                 fontSize = 11.sp,
@@ -341,7 +347,7 @@ private fun UpdateBadge(onClick: () -> Unit, modifier: Modifier = Modifier) {
     ) {
         Image(
             painter = painterResource(R.drawable.ic_arrow_up),
-            contentDescription = "Download update",
+            contentDescription = stringResource(R.string.about_update_cd),
             modifier = Modifier.size(15.dp)
         )
     }
