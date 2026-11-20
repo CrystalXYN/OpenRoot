@@ -196,12 +196,10 @@ object DirtyFragRunner {
         val bootstrap = File(context.applicationInfo.nativeLibraryDir, BOOTSTRAP)
         require(bootstrap.isFile) { "bootstrap is not packaged for this ABI" }
 
-        onLine("$ mkdir -p $STAGE_DIR")
+        onLine(AdbShell.stagedLine(STAGE_DIR, listOf("bootstrap", "openroot.xml", "ksud")))
         AdbShell.exec(manager, "mkdir -p $STAGE_DIR")
-        onLine("$ cat > $STAGE_DIR/$BOOTSTRAP_REMOTE")
         AdbShell.push(manager, "$STAGE_DIR/$BOOTSTRAP_REMOTE", bootstrap.readBytes())
         onProgress(0.2f)
-        onLine("$ chmod 755 $STAGE_DIR/$BOOTSTRAP_REMOTE")
         AdbShell.exec(manager, "chmod 755 $STAGE_DIR/$BOOTSTRAP_REMOTE")
 
         // The daemon reads its settings from here; values match the app's own toggles.
@@ -214,14 +212,12 @@ object DirtyFragRunner {
                 <boolean name="disable_modules" value="false" />
             </map>
         """.trimIndent().toByteArray()
-        onLine("$ cat > $STAGE_DIR/openroot.xml")
         AdbShell.push(manager, "$STAGE_DIR/openroot.xml", prefs)
         onProgress(0.3f)
         AdbShell.exec(manager, "chmod 644 $STAGE_DIR/openroot.xml")
 
         // libksud.so lives in the manager's native library dir, which the shell user can read.
         if (mode == Mode.KERNEL_SU && suManager != null) {
-            onLine("$ cp ${suManager.ksudPath} $STAGE_DIR/ksud")
             val copy = AdbShell.exec(
                 manager,
                 "cp '${suManager.ksudPath}' $STAGE_DIR/ksud && chmod 755 $STAGE_DIR/ksud && echo ok",

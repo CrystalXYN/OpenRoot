@@ -111,20 +111,21 @@ object GpuRunner {
         require(bootstrap.isFile) { "bootstrap is not packaged for this ABI" }
 
         onProgress(0.06f)
-        onLine("$ mkdir -p $STAGE_DIR")
+        onLine(
+            AdbShell.stagedLine(
+                STAGE_DIR,
+                listOfNotNull("payload", "bootstrap", "openroot.xml", suManager?.let { "ksud" }),
+            )
+        )
         AdbShell.exec(manager, "mkdir -p $STAGE_DIR")
 
-        onLine("$ cat > $STAGE_DIR/${payload.asset}")
         AdbShell.push(manager, "$STAGE_DIR/${payload.asset}", payloadFile.readBytes())
         onProgress(0.2f)
-        onLine("$ chmod 755 $STAGE_DIR/${payload.asset}")
         AdbShell.exec(manager, "chmod 755 $STAGE_DIR/${payload.asset}")
 
         // The exploit re-execs this path as uid 0 once __do_sys_capset is restored.
-        onLine("$ cat > $STAGE_DIR/$BOOTSTRAP_REMOTE")
         AdbShell.push(manager, "$STAGE_DIR/$BOOTSTRAP_REMOTE", bootstrap.readBytes())
         onProgress(0.3f)
-        onLine("$ chmod 755 $STAGE_DIR/$BOOTSTRAP_REMOTE")
         AdbShell.exec(manager, "chmod 755 $STAGE_DIR/$BOOTSTRAP_REMOTE")
 
         // Same preference contract the page-cache engine uses; "none" selects the root channel.
@@ -137,13 +138,11 @@ object GpuRunner {
                 <boolean name="disable_modules" value="false" />
             </map>
         """.trimIndent().toByteArray()
-        onLine("$ cat > $STAGE_DIR/openroot.xml")
         AdbShell.push(manager, "$STAGE_DIR/openroot.xml", prefs)
         onProgress(0.38f)
         AdbShell.exec(manager, "chmod 644 $STAGE_DIR/openroot.xml")
 
         if (suManager != null) {
-            onLine("$ cp ${suManager.ksudPath} $STAGE_DIR/ksud")
             val copy = AdbShell.exec(
                 manager,
                 "cp '${suManager.ksudPath}' $STAGE_DIR/ksud && chmod 755 $STAGE_DIR/ksud && echo ok",

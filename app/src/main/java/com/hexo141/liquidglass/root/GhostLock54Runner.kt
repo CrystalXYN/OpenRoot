@@ -146,6 +146,7 @@ object GhostLock54Runner {
             return Result(false, probe, probe.detail)
         }
 
+        log(AdbShell.stagedLine(DIR, listOf("ghostlock54", "kernelsu.ko")))
         if (!pushPayload(context, manager, log)) {
             return Result(false, probe, "the payload could not be staged")
         }
@@ -190,7 +191,6 @@ object GhostLock54Runner {
             log("<e> $PAYLOAD is not in nativeLibraryDir; this build did not compile it")
             return false
         }
-        log("$ push $PAYLOAD_PATH (${bytes.size} bytes)")
         if (runCatching { AdbShell.push(manager, PAYLOAD_PATH, bytes) }.isFailure) {
             log("<e> pushing $PAYLOAD_PATH failed")
             return false
@@ -210,7 +210,6 @@ object GhostLock54Runner {
             log("<e> the bundled $MODULE_ASSET could not be read")
             return false
         }
-        log("$ push $MODULE_PATH (${bytes.size} bytes)")
         if (runCatching { AdbShell.push(manager, MODULE_PATH, bytes) }.isFailure) {
             log("<e> pushing $MODULE_PATH failed")
             return false

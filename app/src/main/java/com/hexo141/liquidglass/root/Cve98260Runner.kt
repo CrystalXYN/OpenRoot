@@ -113,20 +113,24 @@ object Cve98260Runner {
         require(bootstrap.isFile) { "bootstrap is not packaged for this ABI" }
 
         onProgress(0.04f)
-        onLine("$ mkdir -p $STAGE_DIR")
+        onLine(
+            AdbShell.stagedLine(
+                STAGE_DIR,
+                listOfNotNull(
+                    PAYLOAD, BOOTSTRAP_REMOTE, "openroot.xml",
+                    suManager?.let { "ksud" }, profile?.let { PROFILE },
+                ),
+            )
+        )
         AdbShell.exec(manager, "mkdir -p $STAGE_DIR")
 
-        onLine("$ cat > $STAGE_DIR/$PAYLOAD")
         AdbShell.push(manager, "$STAGE_DIR/$PAYLOAD", payloadFile.readBytes())
         onProgress(0.12f)
-        onLine("$ chmod 755 $STAGE_DIR/$PAYLOAD")
         AdbShell.exec(manager, "chmod 755 $STAGE_DIR/$PAYLOAD")
 
         // The handoff target: bootstrap reads openroot.xml and decides late-load vs command channel.
-        onLine("$ cat > $STAGE_DIR/$BOOTSTRAP_REMOTE")
         AdbShell.push(manager, "$STAGE_DIR/$BOOTSTRAP_REMOTE", bootstrap.readBytes())
         onProgress(0.2f)
-        onLine("$ chmod 755 $STAGE_DIR/$BOOTSTRAP_REMOTE")
         AdbShell.exec(manager, "chmod 755 $STAGE_DIR/$BOOTSTRAP_REMOTE")
 
         val managerValue = suManager?.packageName.orEmpty().ifEmpty { "none" }
@@ -138,13 +142,11 @@ object Cve98260Runner {
                 <boolean name="disable_modules" value="false" />
             </map>
         """.trimIndent().toByteArray()
-        onLine("$ cat > $STAGE_DIR/openroot.xml")
         AdbShell.push(manager, "$STAGE_DIR/openroot.xml", prefs)
         onProgress(0.26f)
         AdbShell.exec(manager, "chmod 644 $STAGE_DIR/openroot.xml")
 
         if (suManager != null) {
-            onLine("$ cp ${suManager.ksudPath} $STAGE_DIR/ksud")
             val copy = AdbShell.exec(
                 manager,
                 "cp '${suManager.ksudPath}' $STAGE_DIR/ksud && chmod 755 $STAGE_DIR/ksud && echo ok",
@@ -157,7 +159,6 @@ object Cve98260Runner {
         }
 
         val profileArg = if (profile != null) {
-            onLine("$ cat > $STAGE_DIR/$PROFILE")
             AdbShell.push(
                 manager,
                 "$STAGE_DIR/$PROFILE",
@@ -242,16 +243,13 @@ object Cve98260Runner {
         }
 
         onProgress(0.05f)
-        onLine("$ mkdir -p $STAGE_DIR")
+        onLine(AdbShell.stagedLine(STAGE_DIR, listOfNotNull(PAYLOAD, profile?.let { PROFILE })))
         AdbShell.exec(manager, "mkdir -p $STAGE_DIR")
-        onLine("$ cat > $STAGE_DIR/$PAYLOAD")
         AdbShell.push(manager, "$STAGE_DIR/$PAYLOAD", payloadFile.readBytes())
-        onLine("$ chmod 755 $STAGE_DIR/$PAYLOAD")
         AdbShell.exec(manager, "chmod 755 $STAGE_DIR/$PAYLOAD")
         onProgress(0.28f)
 
         val profileArg = if (profile != null) {
-            onLine("$ cat > $STAGE_DIR/$PROFILE")
             AdbShell.push(
                 manager,
                 "$STAGE_DIR/$PROFILE",

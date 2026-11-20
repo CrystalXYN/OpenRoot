@@ -88,7 +88,7 @@ object JokerRunner {
             return Result(exitCode = 1, output = "", refused = true)
         }
 
-        onLine("$ mkdir -p $REMOTE_DIR")
+        onLine(AdbShell.stagedLine(REMOTE_DIR, listOf(PAYLOAD, TEMP_SU)))
         AdbShell.exec(manager, "mkdir -p $REMOTE_DIR")
 
         for (name in listOf(PAYLOAD, TEMP_SU)) {
@@ -99,7 +99,6 @@ object JokerRunner {
                 return Result(exitCode = 1, output = "", refused = true)
             }
             val remote = if (name == TEMP_SU) TEMP_SU_REMOTE else "$REMOTE_DIR/$name"
-            onLine("$ push $remote (${bytes.size} bytes)")
             val staged = "$remote.part"
             // AdbShell.push throws instead of returning a flag in this tree.
             val pushed = runCatching { AdbShell.push(manager, staged, bytes) }.isSuccess

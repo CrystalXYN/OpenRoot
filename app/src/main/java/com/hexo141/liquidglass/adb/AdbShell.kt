@@ -237,5 +237,16 @@ object AdbShell {
         return manager.openStream("shell:$command")
     }
 
+    /**
+     * The one line an engine logs for a staging step.
+     *
+     * Every engine used to echo `mkdir`, `cat > path` and `chmod N path` for each file it pushed,
+     * which buried the payload's own output under a dozen lines that only ever said "preparing".
+     * Nothing is lost: each copy is still size-checked and a failure throws with the path, so the
+     * per-file echo was noise rather than diagnostics.
+     */
+    fun stagedLine(remoteDir: String, names: List<String>): String =
+        "$ stage ${names.joinToString(", ")} -> $remoteDir"
+
     private const val EXIT_MARKER = "__OPENROOT_EXIT:"
 }

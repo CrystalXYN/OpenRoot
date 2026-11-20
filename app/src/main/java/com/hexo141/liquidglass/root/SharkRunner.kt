@@ -128,7 +128,7 @@ object SharkRunner {
             return Result(exitCode = 1, output = "", refused = true)
         }
 
-        onLine("$ mkdir -p $REMOTE_DIR")
+        onLine(AdbShell.stagedLine(REMOTE_DIR, engine.files))
         AdbShell.exec(manager, "mkdir -p $REMOTE_DIR")
 
         for (name in engine.files) {
@@ -139,7 +139,6 @@ object SharkRunner {
                 return Result(exitCode = 1, output = "", refused = true)
             }
             val remote = "$REMOTE_DIR/$name"
-            onLine("$ push $name (${bytes.size} bytes)")
             val staged = "$remote.part"
             // AdbShell.push throws instead of returning a flag in this tree.
             val pushed = runCatching { AdbShell.push(manager, staged, bytes) }.isSuccess

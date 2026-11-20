@@ -210,7 +210,10 @@ object MtkEasySu {
             log("<e> cannot create $STAGE_DIR")
             return null
         }
-        log("<i> staging the MediaTek payload in $STAGE_DIR")
+        log(
+            "<i> staging " + STAGE_ASSETS.joinToString { it.substringAfterLast('/') } +
+                " in $STAGE_DIR"
+        )
         for (asset in STAGE_ASSETS) {
             val name = asset.substringAfterLast('/')
             val ok = pushAsset(context, manager, asset, "$STAGE_DIR/$name", log)
@@ -244,7 +247,6 @@ object MtkEasySu {
             log("<e> asset '$asset' is missing from the APK")
             return false
         }
-        log("$ push $remote (${bytes.size} bytes)")
         val pushed = runCatching { AdbShell.push(manager, remote, bytes) }
         if (pushed.isFailure) {
             log("<e> pushing $remote failed")

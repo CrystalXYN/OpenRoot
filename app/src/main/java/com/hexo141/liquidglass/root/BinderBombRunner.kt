@@ -228,7 +228,15 @@ object BinderBombRunner {
         }
 
         onProgress(0.06f)
-        onLine("$ mkdir -p $REMOTE_DIR")
+        onLine(
+            AdbShell.stagedLine(
+                REMOTE_DIR,
+                listOfNotNull(
+                    "payload", PROFILE_NAME, BOOTSTRAP_REMOTE, "openroot.xml",
+                    suManager?.let { "ksud" },
+                ),
+            )
+        )
         AdbShell.exec(manager, "mkdir -p $REMOTE_DIR")
 
         // AdbShell.stage drops the bytes in this app's external cache first, so the shell only
@@ -242,10 +250,9 @@ object BinderBombRunner {
             payloadFile.readBytes(),
             relayDir,
             "stage-binder54.bin",
-            onLine,
+            {},
         )
         onProgress(0.18f)
-        onLine("$ chmod 755 $REMOTE_DIR/$PAYLOAD_REMOTE")
         AdbShell.chmod(manager, "$REMOTE_DIR/$PAYLOAD_REMOTE", "755")
 
         AdbShell.stage(
@@ -254,10 +261,9 @@ object BinderBombRunner {
             loaded.contents.toByteArray(),
             relayDir,
             "stage-binder54.conf",
-            onLine,
+            {},
         )
         onProgress(0.28f)
-        onLine("$ chmod 644 $REMOTE_DIR/$PROFILE_NAME")
         AdbShell.chmod(manager, "$REMOTE_DIR/$PROFILE_NAME", "644")
 
         AdbShell.stage(
@@ -266,10 +272,9 @@ object BinderBombRunner {
             bootstrap.readBytes(),
             relayDir,
             "stage-bootstrap.bin",
-            onLine,
+            {},
         )
         onProgress(0.36f)
-        onLine("$ chmod 755 $REMOTE_DIR/$BOOTSTRAP_REMOTE")
         AdbShell.chmod(manager, "$REMOTE_DIR/$BOOTSTRAP_REMOTE", "755")
 
         // Same preference contract the other engines use; "none" selects the root channel.
@@ -288,7 +293,7 @@ object BinderBombRunner {
             prefs,
             relayDir,
             "stage-prefs.xml",
-            onLine,
+            {},
         )
         onProgress(0.44f)
         AdbShell.chmod(manager, "$REMOTE_DIR/openroot.xml", "644")
@@ -314,9 +319,8 @@ object BinderBombRunner {
                     ksudBytes,
                     relayDir,
                     "stage-ksud.bin",
-                    onLine,
+                    {},
                 )
-                onLine("$ chmod 755 $REMOTE_DIR/ksud")
                 AdbShell.chmod(manager, "$REMOTE_DIR/ksud", "755")
                 onProgress(0.5f)
 

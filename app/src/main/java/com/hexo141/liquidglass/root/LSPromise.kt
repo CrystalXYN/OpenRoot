@@ -259,13 +259,13 @@ object LSPromise {
         }
         runCatching { AdbShell.exec(manager, "mkdir -p $DIR") }
         val files = listOf("shelld" to SHELLD, "splicehelper" to SPLICEHELPER, "dirtyfrag.ko" to MODULE)
+        log(AdbShell.stagedLine(DIR, files.map { it.first }))
         for ((asset, remote) in files) {
             val bytes = Assets.read(context, "lspromise/$asset")
             if (bytes == null || bytes.isEmpty()) {
                 log("<e> asset 'lspromise/$asset' could not be read")
                 return false
             }
-            log("$ push $remote (${bytes.size} bytes)")
             if (runCatching { AdbShell.push(manager, remote, bytes) }.isFailure) {
                 log("<e> pushing $remote failed")
                 return false
