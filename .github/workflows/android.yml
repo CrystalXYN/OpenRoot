@@ -5,6 +5,8 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  # 允许在 Actions 页面手动重跑，改完 secrets 不用再推一次空提交
+  workflow_dispatch:
 
 jobs:
   build:
@@ -47,27 +49,68 @@ jobs:
       env:
         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
-    # 3. 使用 r0adkll/sign-android-release 对 APK 签名
+    # 3. 先确认四个签名 secret 都在。缺任何一个，apksigner 只会报
+    #    "Failed to load signer signer #1"，看不出是 secret 没配。
+    - name: Check signing secrets
+      env:
+        SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        ALIAS: ${{ secrets.ALIAS }}
+        KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      run: |
+        missing=""
+        [ -n "$SIGNING_KEY" ]        || missing="$missing SIGNING_KEY"
+        [ -n "$ALIAS" ]              || missing="$missing ALIAS"
+        [ -n "$KEY_STORE_PASSWORD" ] || missing="$missing KEY_STORE_PASSWORD"
+        [ -n "$KEY_PASSWORD" ]       || missing="$missing KEY_PASSWORD"
+        if [ -n "$missing" ]; then
+          echo "::error::缺少签名 secret:$missing。请在 Settings → Secrets and variables → Actions 中补齐（SIGNING_KEY 为 keystore 的 base64）。"
+          exit 1
+        fi
+        echo "签名 secret 齐全"
+
+    # 4. 直接用 build-tools 的 zipalign + apksigner 签名。
+    #    不走第三方 action：它对空 secret 的报错没有指向性，且已被告知 Node 20 弃用。
     - name: Sign APK
       id: sign_app
-      uses: r0adkll/sign-android-release@v1
-      with:
-        releaseDirectory: app/build/outputs/apk/release
-        signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-        alias: ${{ secrets.ALIAS }}
-        keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
-        keyPassword: ${{ secrets.KEY_PASSWORD }}
       env:
-        BUILD_TOOLS_VERSION: "34.0.0"
+        SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        ALIAS: ${{ secrets.ALIAS }}
+        KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      run: |
+        set -euo pipefail
+        BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+        echo "build-tools: $BT"
 
-    # 4. 将签名后的 APK 重命名为 v年月日.apk
+        UNSIGNED=$(ls app/build/outputs/apk/release/*-unsigned.apk | head -1)
+        echo "unsigned: $UNSIGNED"
+
+        KS="$RUNNER_TEMP/signingKey.jks"
+        printf '%s' "$SIGNING_KEY" | base64 -d > "$KS"
+        keytool -list -keystore "$KS" -storepass "$KEY_STORE_PASSWORD" -alias "$ALIAS" > /dev/null
+
+        "$BT/zipalign" -f -p 4 "$UNSIGNED" "$RUNNER_TEMP/aligned.apk"
+        OUT="app/build/outputs/apk/release/app-release-signed.apk"
+        "$BT/apksigner" sign \
+          --ks "$KS" \
+          --ks-key-alias "$ALIAS" \
+          --ks-pass "pass:$KEY_STORE_PASSWORD" \
+          --key-pass "pass:$KEY_PASSWORD" \
+          --out "$OUT" \
+          "$RUNNER_TEMP/aligned.apk"
+        "$BT/apksigner" verify --verbose "$OUT" | head -6
+
+        echo "signedReleaseFile=$OUT" >> "$GITHUB_OUTPUT"
+
+    # 5. 将签名后的 APK 重命名为 v年月日.apk
     - name: Rename APK
       run: |
         mv ${{ steps.sign_app.outputs.signedReleaseFile }} app/build/outputs/apk/release/$VERSION.apk
         echo "重命名完成，当前文件列表:"
         ls -la app/build/outputs/apk/release/
 
-    # 5. 创建 GitHub Release 并上传已签名的 APK
+    # 6. 创建 GitHub Release 并上传已签名的 APK
     - name: Create GitHub Release and Upload Assets
       if: github.event_name == 'push'
       uses: softprops/action-gh-release@v2
