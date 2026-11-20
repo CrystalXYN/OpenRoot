@@ -364,7 +364,7 @@ private fun installedVersionName(context: Context): String =
 private data class AppUpdate(val version: String, val url: String)
 
 /**
- * Latest release of `hexo141/OpenRoot`, from `GET /repos/hexo141/OpenRoot/releases/latest`.
+ * Latest release of this fork, from `GET /repos/CrystalXYN/OpenRoot/releases/latest`.
  *
  * Gradle stamps the APK with the build date and CI publishes the same date as the tag, so a
  * numeric tag comparison is an exact update test. The answer is cached for a few minutes, and a
@@ -372,7 +372,7 @@ private data class AppUpdate(val version: String, val url: String)
  */
 private object UpdateChecker {
     private const val LATEST_RELEASE_URL =
-        "https://api.github.com/repos/hexo141/OpenRoot/releases/latest"
+        "https://api.github.com/repos/$PROJECT_OWNER/$PROJECT_REPO/releases/latest"
     private const val CHECK_INTERVAL_MS = 10 * 60 * 1000L
 
     @Volatile
@@ -435,13 +435,26 @@ private object UpdateChecker {
 }
 
 /**
- * Contributors of the repository, from `GET /repos/hexo141/OpenRoot/contributors`.
+ * Contributors of the repository, from `GET /repos/CrystalXYN/OpenRoot/contributors`.
  *
  * The result is kept for the process lifetime (60 unauthenticated requests an hour is plenty for
- * one load) and the owner is used when the request cannot be made, so the row is never empty.
+ * one load) and the fork owner is used when the request cannot be made, so the row is never empty.
  */
 private object GitHubContributors {
-    val fallback = listOf(Contributor("hexo141", "https://github.com/hexo141.png?size=144"))
+    /**
+     * The fork owner is always drawn first. GitHub lists whoever authored commits, and a fork with
+     * a rewritten history can answer with an empty array - a contributor row that never mentions
+     * the person maintaining this build would read as an oversight.
+     */
+    private val owner = Contributor(
+        PROJECT_OWNER,
+        "https://github.com/$PROJECT_OWNER.png?size=144",
+    )
+
+    val fallback = listOf(
+        owner,
+        Contributor("hexo141", "https://github.com/hexo141.png?size=144"),
+    )
 
     @Volatile
     private var cache: List<Contributor>? = null
@@ -453,7 +466,12 @@ private object GitHubContributors {
                 .onFailure { android.util.Log.w("About", "contributors request failed", it) }
                 .getOrNull()
         }
-        val list = fetched?.takeIf { it.isNotEmpty() } ?: cache ?: fallback
+        val listed = fetched?.takeIf { it.isNotEmpty() } ?: cache ?: fallback
+        // Pin the owner first, keep everyone else in the order GitHub returned them.
+        val list = buildList {
+            add(owner)
+            listed.forEach { if (it.login != owner.login) add(it) }
+        }
         cache = list
         return list
     }
@@ -531,6 +549,12 @@ private val aboutShadow = Shadow(
     blurRadius = 6f
 )
 
-private const val ABOUT_URL = "https://github.com/hexo141/OpenRoot"
+/**
+ * Where this build comes from. The fork carries its own releases, contributor list and licence
+ * mirror, so all four links point at it rather than at the upstream project.
+ */
+private const val PROJECT_OWNER = "CrystalXYN"
+private const val PROJECT_REPO = "OpenRoot"
+private const val ABOUT_URL = "https://github.com/$PROJECT_OWNER/$PROJECT_REPO"
 private const val CONTRIBUTORS_URL =
-    "https://api.github.com/repos/hexo141/OpenRoot/contributors?per_page=100"
+    "https://api.github.com/repos/$PROJECT_OWNER/$PROJECT_REPO/contributors?per_page=100"
