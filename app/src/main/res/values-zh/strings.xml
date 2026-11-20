@@ -116,6 +116,7 @@
 
     <!-- KASLR 卡片 -->
     <string name="kaslr_title">KASLR 偏移</string>
+    <string name="kaslr_no_slide">无法泄露 KASLR slide</string>
     <string name="kaslr_resolving">解析中…</string>
     <string name="kaslr_get">获取偏移</string>
     <string name="kaslr_manual_close">手动 · 收起</string>

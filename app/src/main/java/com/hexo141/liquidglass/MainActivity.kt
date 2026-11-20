@@ -1669,9 +1669,9 @@ class MainActivity : AppCompatActivity() {
                     }
                     value == null -> {
                         kaslrNoteError.value = true
-                        kaslrNote.value =
-                            "no slide reported - tracefs locked, or the profile does not match this kernel"
-                        logLine("[!] kaslr: the payload printed no slide")
+                        // The runner already logged the single `[-]` line; the card repeats the
+                        // verdict, not the tracefs diagnosis that made the failure noisy.
+                        kaslrNote.value = getString(R.string.kaslr_no_slide)
                     }
                     else -> {
                         kaslrSlide.value = value

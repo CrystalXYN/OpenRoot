@@ -1,6 +1,7 @@
 package com.hexo141.liquidglass.root
 
 import android.content.Context
+import com.hexo141.liquidglass.R
 import com.hexo141.liquidglass.adb.AbsAdbConnectionManager
 import com.hexo141.liquidglass.adb.AdbShell
 import com.hexo141.liquidglass.bootimg.Cve98260Profile
@@ -189,9 +190,11 @@ object Cve98260Runner {
                 "OPENROOT_HANDOFF=$STAGE_DIR/$BOOTSTRAP_REMOTE C98260_VERBOSE=1 " +
                 "./$PAYLOAD --color=never --no-ksu$profileArg$slideArg$modeArg 2>&1",
             { line ->
+                // The SELinux verdict arrives as a `C98260_*` protocol line, which is not shown
+                // in the log - read it from the raw line, not from what survives filtering.
+                if (line.contains(SELINUX_ONLY_DONE)) selinuxDone = true
+                if (line.contains(SELINUX_ONLY_UNVERIFIED)) selinuxUnverified = true
                 val cleaned = cleanStatus(line)
-                if (cleaned.contains(SELINUX_ONLY_DONE)) selinuxDone = true
-                if (cleaned.contains(SELINUX_ONLY_UNVERIFIED)) selinuxUnverified = true
                 if (cleaned.isNotEmpty()) {
                     stageProgress(cleaned)?.let(onProgress)
                     onLine(cleaned)
@@ -269,39 +272,62 @@ object Cve98260Runner {
 
         var slide: Long? = null
         onLine("$ cd $STAGE_DIR && ./$PAYLOAD --color=never --no-ksu --kaslr-only$profileArg")
-        val exitCode = AdbShell.stream(
+        AdbShell.stream(
             manager,
             "cd $STAGE_DIR && TMPDIR=$STAGE_DIR HOME=$STAGE_DIR " +
                 "./$PAYLOAD --color=never --no-ksu --kaslr-only$profileArg 2>&1",
             { line ->
-                val cleaned = cleanStatus(line)
-                if (cleaned.isNotEmpty()) {
-                    onLine(cleaned)
-                    val at = cleaned.indexOf(SLIDE_MARKER)
+                // `C98260_SLIDE=0x…` is a protocol line and never reaches the log, so it has to
+                // be read here, from the raw line, before filtering drops it.
+                if (slide == null) {
+                    val at = line.indexOf(SLIDE_MARKER)
                     if (at >= 0) {
-                        val raw = cleaned.substring(at + SLIDE_MARKER.length).trim()
+                        val raw = line.substring(at + SLIDE_MARKER.length).trim()
                         val end = raw.indexOfFirst { !it.isLetterOrDigit() }
                         val value = if (end < 0) raw else raw.substring(0, end)
                         slide = value.toLongOrNull(16)
                     }
                 }
+                val cleaned = cleanStatus(line)
+                if (cleaned.isNotEmpty()) onLine(cleaned)
             },
             // One priming round can be silent for a minute; calibration A is a single round.
             idleTimeoutMs = 180_000,
         )
         onProgress(1f)
-        if (slide == null) {
-            onLine("<i> --kaslr-only exited with $exitCode without printing a slide")
-        }
+        // One sentence for the whole failure. The payload says it four more times (tracefs
+        // unarmed, stage failed, elapsed time, done marker) and the runner used to add two lines
+        // of its own on top; the user needs the verdict, not the transcript.
+        if (slide == null) onLine("[-] " + context.getString(R.string.kaslr_no_slide))
         return slide
     }
 
-    /** `\x1eC98260_STATUS <stage> <status>` is the host protocol marker, not a log line. */
+    /**
+     * Drops the payload's machine protocol and its own progress chatter from the log.
+     *
+     * `\x1eC98260_STATUS <stage> <status>` is how the payload reports stage changes, and the whole
+     * `C98260_*` family is host-side protocol that was never meant to be read by a person. On a
+     * failed calibration the payload also prints the tracefs error, a `[calib_a]` failure line, two
+     * `[耗时]` timers and a `DONE=0` marker - five ways of saying what the runner now says once.
+     */
     private fun cleanStatus(line: String): String {
         val marker = "\u001eC98260_STATUS"
-        if (!line.contains(marker)) return line.trimEnd()
-        val rest = line.substringAfter(marker).trim()
-        return if (rest.isEmpty()) "" else "[stage] " + rest.replace(' ', ':')
+        if (line.contains(marker)) {
+            val rest = line.substringAfter(marker).trim()
+            // calib_a finishes in a fraction of a second and only matters when it fails, which is
+            // reported by the runner itself; its running/failed pair was pure noise.
+            if (rest.isEmpty() || rest.startsWith("calib_a")) return ""
+            return "[stage] " + rest.replace(' ', ':')
+        }
+        val text = line.trimStart()
+        return when {
+            text.startsWith("C98260_") -> ""
+            text.startsWith("[耗时]") -> ""
+            text.startsWith("[calib_a]") -> ""
+            // Only reachable when the kernel refused the tracefs event, which is the same failure.
+            text.startsWith("无法启用 ") -> ""
+            else -> line.trimEnd()
+        }
     }
 
     /** Maps the payload's own progress markers onto the bar; {@code null} leaves it untouched. */

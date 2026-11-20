@@ -115,6 +115,7 @@
 
     <!-- KASLR card -->
     <string name="kaslr_title">KASLR slide</string>
+    <string name="kaslr_no_slide">failed to leak the KASLR slide</string>
     <string name="kaslr_resolving">Resolving…</string>
     <string name="kaslr_get">Get Slide</string>
     <string name="kaslr_manual_close">Manual · close</string>
