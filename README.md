@@ -58,7 +58,13 @@ and can run a bundled payload that grants temporary root on supported kernels.
     The payload calibrates the KASLR slide itself; its offsets are the link-time addresses the
     Profile tab derives from the same `boot.img` (kernel 5.7+, parsed profile required), and it
     hands root to the same `bootstrap` as the other engines. The same row carries an **Only SELinux**
-    action: it runs the payload with `--selinux-only` and stops before the cred rewrite.
+    action: it runs the payload with `--selinux-only` and stops before the cred rewrite. Its Run
+    opens an argument sheet instead of starting at once, because the payload has entry points a
+    single button cannot express: the write-zero endpoint (`--poke`, `--poke-kptr`, `--poke-panic`,
+    `--poke-retry`), the two leak-only modes, the address gate, the profile dump, and the
+    calibration overrides (`--page-offset`, `--va-bits`, `--max-slide`, `--set`). Options that
+    already have a control elsewhere on the screen (`--slide`, `--kaslr-only`, `--selinux-only`,
+    `--profile`, `--color`, `--no-ksu`) are deliberately not repeated: one setting, one control.
   - **CVE-2026-43284** (page cache write primitive): loads a small kernel module. It needs no
     per-device profile, only a kernel major/minor that matches one of the bundled module images,
     and it runs inside the app process because it uses the IPsec transform the app installs.

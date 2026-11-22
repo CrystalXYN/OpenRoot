@@ -14,6 +14,21 @@ object AdbShell {
     private const val IDLE_TIMEOUT_MS = 15_000L
 
     /**
+     * The stream behind the running [stream] call, if one is open.
+     *
+     * A payload can sit silent for minutes, so the log page needs a way to cut the read apart
+     * from waiting for the idle timeout: closing the stream makes the blocked `read` return.
+     */
+    @Volatile
+    private var activeStream: AdbStream? = null
+
+    /** Cuts the running [stream] call; safe from any thread, no-op when nothing is streaming. */
+    fun cancelActiveStream() {
+        runCatching { activeStream?.close() }
+        ShizukuShell.cancelActiveStream()
+    }
+
+    /**
      * @param command command line, executed by the daemon's shell (`shell:<command>`)
      * @param timeoutMs how long the command may stay silent before the stream is closed
      * @return everything the command wrote to stdout, decoded as UTF-8
@@ -67,6 +82,7 @@ object AdbShell {
         // in 4 KB chunks. A pty makes it line buffered, i.e. real time like a terminal. The v1
         // service carries no exit status, so the wrapper echoes it as a marker instead.
         val stream = openStream(manager, "$command; echo \"$EXIT_MARKER\$?\"", pty = true)
+        activeStream = stream
         val watchdog = StreamWatchdog(stream, idleTimeoutMs)
         val pending = StringBuilder()
         var exitCode = -1
@@ -96,6 +112,7 @@ object AdbShell {
             if (pending.isNotEmpty()) onLine(pending.toString().trimEnd('\r'))
         } finally {
             watchdog.stop()
+            if (activeStream === stream) activeStream = null
             runCatching { stream.close() }
         }
         return exitCode

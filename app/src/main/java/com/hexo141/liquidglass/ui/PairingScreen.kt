@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hexo141.liquidglass.R
 import com.hexo141.liquidglass.device.DeviceInfo
+import com.hexo141.liquidglass.root.C98260Args
 import com.kyant.backdrop.Backdrop
 
 /**
@@ -88,6 +89,11 @@ fun PairingScreen(
     kaslrNoteError: Boolean,
     onKaslrAuto: () -> Unit,
     onKaslrManual: (String) -> Unit,
+    c98260OptionsVisible: Boolean,
+    c98260Args: C98260Args,
+    c98260Profiles: List<C98260ProfileChoice>,
+    onC98260Run: (C98260Args) -> Unit,
+    onDismissC98260Options: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     // API < 31 has no RenderEffect, so refraction does nothing; a translucent surface keeps the
@@ -315,6 +321,18 @@ fun PairingScreen(
             choices = exploitChoices,
             onPick = onPickEngine,
             onDismiss = onDismissPicker,
+            surfaceColor = glassSurfaceColor
+        )
+
+        // Drawn after the picker: it is opened from a row of that picker, so it must cover it.
+        Cve98260Options(
+            visible = c98260OptionsVisible,
+            backdrop = backdrop,
+            initial = c98260Args,
+            hasSlide = kaslrSlide != null,
+            profiles = c98260Profiles,
+            onRun = onC98260Run,
+            onDismiss = onDismissC98260Options,
             surfaceColor = glassSurfaceColor
         )
 

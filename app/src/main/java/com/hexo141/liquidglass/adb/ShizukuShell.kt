@@ -22,6 +22,18 @@ object ShizukuShell {
     var lastError: String? = null
         private set
 
+    /** The `sh -c` process behind the running [stream]; destroyed by [cancelActiveStream]. */
+    @Volatile
+    private var activeProcess: Process? = null
+
+    /**
+     * Kills the running [stream] process. The payload is a child of that shell, so the remote kill
+     * comes first ([ExploitStop]); this only unblocks the local reader when the kill missed.
+     */
+    fun cancelActiveStream() {
+        runCatching { activeProcess?.destroy() }
+    }
+
     /**
      * Set once [probeUid] really executed a command.
      *
@@ -135,6 +147,7 @@ object ShizukuShell {
     @Throws(IOException::class)
     fun stream(command: String, onLine: (String) -> Unit, idleTimeoutMs: Long): Int {
         val process = start(command)
+        activeProcess = process
         val last = AtomicLong(System.currentTimeMillis())
         val finished = AtomicBoolean(false)
         val watchdog = Thread({
@@ -165,6 +178,7 @@ object ShizukuShell {
         } finally {
             finished.set(true)
             watchdog.interrupt()
+            if (activeProcess === process) activeProcess = null
         }
     }
 

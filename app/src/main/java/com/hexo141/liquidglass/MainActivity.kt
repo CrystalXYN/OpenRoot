@@ -31,6 +31,7 @@ import androidx.core.content.ContextCompat
 import com.hexo141.liquidglass.adb.AdbAuthenticationFailedException
 import com.hexo141.liquidglass.adb.AdbConnectionManager
 import com.hexo141.liquidglass.adb.AdbKeyManager
+import com.hexo141.liquidglass.adb.AdbShell
 import com.hexo141.liquidglass.adb.AdbPairingService
 import com.hexo141.liquidglass.adb.PairingState
 import com.hexo141.liquidglass.adb.ShizukuShell
@@ -49,8 +50,10 @@ import com.hexo141.liquidglass.bootimg.ProfileStore
 import com.hexo141.liquidglass.consent.ConsentStore
 import com.hexo141.liquidglass.device.DeviceInfo
 import com.hexo141.liquidglass.root.BinderBombRunner
+import com.hexo141.liquidglass.root.C98260Args
 import com.hexo141.liquidglass.root.DirtyFragRunner
 import com.hexo141.liquidglass.root.ExploitMemory
+import com.hexo141.liquidglass.root.ExploitStop
 import com.hexo141.liquidglass.root.GhostLock54Runner
 import com.hexo141.liquidglass.root.GpuRunner
 import com.hexo141.liquidglass.root.JokerRunner
@@ -65,6 +68,7 @@ import com.hexo141.liquidglass.root.RootHandoff
 import com.hexo141.liquidglass.root.RootShell
 import com.hexo141.liquidglass.root.SharkRunner
 import com.hexo141.liquidglass.root.Zygote31317
+import com.hexo141.liquidglass.ui.C98260ProfileChoice
 import com.hexo141.liquidglass.ui.ConsentScreen
 import com.hexo141.liquidglass.ui.ConsentTransition
 import com.hexo141.liquidglass.ui.ExploitLogScreen
@@ -191,6 +195,16 @@ class MainActivity : AppCompatActivity() {
     /** A temporary-root payload is running. */
     private val exploiting = mutableStateOf(false)
 
+    /** A force stop is in flight: the log page shows "stopping" and ignores further taps. */
+    private val forceStopping = mutableStateOf(false)
+
+    /**
+     * Set by [forceStopExploit] and read when the worker finishes, so the stream's teardown
+     * exception ("stream closed") does not overwrite the honest "stopped by the user" status.
+     */
+    @Volatile
+    private var forceStopped = false
+
     /** Live payload output. */
     private val exploitLog = mutableStateOf<List<String>>(emptyList())
 
@@ -214,6 +228,24 @@ class MainActivity : AppCompatActivity() {
 
     /** Whether the vulnerability picker is shown. */
     private val pickerVisible = mutableStateOf(false)
+
+    /** Whether the 98260 argument sheet is shown; the row's Run opens it instead of running. */
+    private val c98260OptionsVisible = mutableStateOf(false)
+
+    /** Last arguments chosen in that sheet, reused when it reopens. */
+    private val c98260Args = mutableStateOf(C98260Args())
+
+    /** Parsed 98260 snapshots offered at the top of that sheet, rebuilt when it opens. */
+    private val c98260Profiles = mutableStateOf<List<C98260ProfileChoice>>(emptyList())
+
+    /**
+     * Snapshot picked in the sheet for the run in flight.
+     *
+     * Kept out of [C98260Args] because the arguments are also replayed after the sheet closes;
+     * this is consumed once by [runC98260Engine] so a later `--selinux-only` run goes back to the
+     * automatic match instead of silently reusing the override.
+     */
+    private var c98260ProfileOverride: Cve98260Profile? = null
 
     /** Whether the profile sheet (behind "Choose a built-in profile") is shown. */
     private val profilePickerVisible = mutableStateOf(false)
@@ -512,6 +544,12 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 when {
                     selectedTab.value != 0 -> selectedTab.value = 0
+                    // Cancelling the 98260 arguments goes back to the list it was opened from,
+                    // not all the way to the home screen.
+                    c98260OptionsVisible.value -> {
+                        c98260OptionsVisible.value = false
+                        pickerVisible.value = true
+                    }
                     pickerVisible.value -> pickerVisible.value = false
                     else -> {
                         isEnabled = false
@@ -571,6 +609,14 @@ class MainActivity : AppCompatActivity() {
                                     kaslrNoteError = kaslrNoteError.value,
                                     onKaslrAuto = ::resolveKaslrAuto,
                                     onKaslrManual = ::applyKaslrManual,
+                                    c98260OptionsVisible = c98260OptionsVisible.value,
+                                    c98260Args = c98260Args.value,
+                                    c98260Profiles = c98260Profiles.value,
+                                    onC98260Run = ::startC98260,
+                                    onDismissC98260Options = {
+                                        c98260OptionsVisible.value = false
+                                        pickerVisible.value = true
+                                    },
                                 )
                             },
                             profile = { backdrop ->
@@ -606,6 +652,8 @@ class MainActivity : AppCompatActivity() {
                                     commandMode = commandMode.value,
                                     running = exploiting.value,
                                     onCommand = ::runRootCommand,
+                                    onForceStop = ::forceStopExploit,
+                                    stopping = forceStopping.value,
                                     backdrop = backdrop,
                                 )
                             },
@@ -1272,6 +1320,13 @@ class MainActivity : AppCompatActivity() {
                 // Only the local payload has the short path; Shark's build runs its own script.
                 altLabel = if (available.c98260) getString(R.string.engine_only_selinux) else null,
                 onAlt = { startExploit(ENGINE_CVE_98260_SELINUX) },
+                // The local payload opens the argument sheet instead of running on the spot;
+                // naming that on the capsule is cheaper than a paragraph in the row's detail.
+                runLabel = if (available.c98260 && !available.shark98260) {
+                    getString(R.string.picker_options)
+                } else {
+                    null
+                },
             ),
             /*
              * One row for CVE-2026-64560, three builds of the same posix-cpu-timers bug. JokerLock
@@ -1506,6 +1561,57 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val info = deviceInfo.value ?: return
+        // 98260's payload has more entry points than one button can express - write-zero, the two
+        // leak-only modes, the address gate - so its Run asks for arguments first. Shark's 6.18
+        // build runs a fixed script of its own, so that path keeps running directly.
+        if (engineId == ENGINE_CVE_98260) {
+            val shark = SharkRunner.Engine.CVE_98260.takeIf {
+                it.matches(info.kernel) && SharkRunner.isPayloadPresent(this, it)
+            }
+            if (shark == null) {
+                // Rebuilt on every open: a boot.img imported while the sheet was closed has to
+                // show up without restarting the app.
+                c98260Profiles.value = ProfileStore.listC98260(this).map {
+                    C98260ProfileChoice(it.release, it.sourceName)
+                }
+                c98260OptionsVisible.value = true
+                return
+            }
+        }
+        startExploitNow(engineId, emptyList(), recordOutcome = true)
+    }
+
+    /** The 98260 sheet was confirmed: close it and run exactly the command line it previewed. */
+    private fun startC98260(args: C98260Args) {
+        c98260OptionsVisible.value = false
+        pickerVisible.value = false
+        if (exploiting.value) return
+        if (!hasShellChannel) {
+            toast(R.string.exploit_needs_adb)
+            return
+        }
+        c98260Args.value = args
+        // The sheet's picker is the only place a snapshot can be chosen, so resolve it here: the
+        // runner only knows how to stage a parsed object, not a release name.
+        val release = args.profileRelease.ifEmpty { deviceInfo.value?.kernel.orEmpty() }
+        c98260ProfileOverride = ProfileStore.loadC98260(this, release)?.let(Cve98260Profile::parse)
+        if (args.profileRelease.isNotEmpty()) {
+            logLine(
+                if (c98260ProfileOverride != null) "<i> profile ${args.profileRelease}"
+                else "<i> profile ${args.profileRelease} is gone; the built-in table is used"
+            )
+        }
+        // Only a full escalation says anything about this kernel; a poke or a leak run must not
+        // mark the engine as "did not work" in the status card.
+        startExploitNow(ENGINE_CVE_98260, args.toArgs(), args.attemptsEscalation)
+    }
+
+    private fun startExploitNow(
+        engineId: String,
+        extraArgs: List<String>,
+        recordOutcome: Boolean,
+    ) {
+        val info = deviceInfo.value ?: return
         // The payload is resolved from the device, not from the row: one row per CVE.
         val gpuPayload = if (engineId == ENGINE_CVE_21479) {
             GpuRunner.payloadFor(info)?.takeIf { GpuRunner.isPayloadPresent(this, it) }
@@ -1564,6 +1670,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         exploiting.value = true
+        forceStopping.value = false
+        forceStopped = false
+        ExploitStop.clearStop()
         exploitLog.value = emptyList()
         exploitStatus.value = null
         exploitProgress.value = 0f
@@ -1584,7 +1693,7 @@ class MainActivity : AppCompatActivity() {
                     // 98260: Shark's 6.18 build, else the local payload (which owns the short path).
                     engineId == ENGINE_CVE_98260 ->
                         if (shark98260 != null) runSharkEngine(info, shark98260, ksud)
-                        else runC98260Engine(info, ksud)
+                        else runC98260Engine(info, ksud, extraArgs, recordOutcome)
                     engineId == ENGINE_CVE_98260_SELINUX -> runC98260SelinuxEngine(info)
                     // 64560: the fingerprint-pinned build, then the family build, then the port.
                     engineId == ENGINE_CVE_64560 -> when {
@@ -1612,11 +1721,20 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             runOnUiThread {
+                val stopped = forceStopped
+                forceStopped = false
+                forceStopping.value = false
                 exploiting.value = false
                 exploitProgress.value = 1f
-                exploitStatus.value = outcome.getOrElse { error ->
-                    Log.w(TAG, "exploit failed", error)
-                    error.message ?: error.javaClass.simpleName
+                exploitStatus.value = if (stopped) {
+                    // The stream ends with a closed-channel exception or exit -1; neither says
+                    // anything useful once the user has already asked for the kill.
+                    getString(R.string.log_force_stopped)
+                } else {
+                    outcome.getOrElse { error ->
+                        Log.w(TAG, "exploit failed", error)
+                        error.message ?: error.javaClass.simpleName
+                    }
                 }
             }
         }, "root-exploit").start()
@@ -1624,6 +1742,51 @@ class MainActivity : AppCompatActivity() {
 
     private fun reportProgress(value: Float) {
         runOnUiThread { exploitProgress.value = value }
+    }
+
+    /**
+     * Force stop for the log page: kills the payload processes on the device first, then cuts the
+     * local stream so the worker returns without sitting through the idle timeout.
+     *
+     * Only running processes are killed. The 98260 payload parks a gravestone child in `SIGSTOP`
+     * so the kernel never walks its poisoned timerqueue on the way out - killing that child would
+     * undo the one thing keeping the device alive - which is why `T`-state processes are skipped
+     * inside [ExploitStop].
+     */
+    private fun forceStopExploit() {
+        if (!exploiting.value || forceStopping.value) return
+        forceStopping.value = true
+        forceStopped = true
+        ExploitStop.requestStop()
+        logLine("<i> 强行停止：正在结束设备上的载荷进程")
+        Thread({
+            val killed = runCatching { ExploitStop.killPayloads(AdbConnectionManager.get(this)) }
+                .getOrElse { error ->
+                    Log.w(TAG, "force stop failed", error)
+                    -1
+                }
+            AdbShell.cancelActiveStream()
+            runOnUiThread {
+                logLine(
+                    when {
+                        killed > 0 -> "<i> 已结束 $killed 个载荷进程，日志流已断开"
+                        killed == 0 -> "<i> 没有运行中的载荷进程，已断开日志流"
+                        else -> "<i> 结束载荷失败，已断开日志流；设备上的进程可能仍在运行"
+                    }
+                )
+                // A transport that ignores the local close can leave the worker blocked on read.
+                // The payload is already dead, so free the page instead of showing "stopping"
+                // until the idle timeout; the orphan thread exits on its own.
+                refreshHandler.postDelayed({
+                    if (forceStopping.value && exploiting.value) {
+                        forceStopping.value = false
+                        exploiting.value = false
+                        exploitProgress.value = 1f
+                        exploitStatus.value = getString(R.string.log_force_stopped)
+                    }
+                }, 5_000)
+            }
+        }, "exploit-force-stop").start()
     }
 
     /**
@@ -1762,10 +1925,26 @@ class MainActivity : AppCompatActivity() {
      * only stages files and reads the outcome. Its profile is the 98260 snapshot parsed from the
      * same boot.img; without one the payload's built-in 6.1.134 / 6.6.118 table applies.
      */
-    private fun runC98260Engine(info: DeviceInfo, ksud: KsuManager.Target?): String {
-        val profile = ProfileStore.loadC98260(this, info.kernel)?.let(Cve98260Profile::parse)
+    private fun runC98260Engine(
+        info: DeviceInfo,
+        ksud: KsuManager.Target?,
+        extraArgs: List<String>,
+        recordOutcome: Boolean,
+    ): String {
+        // One-shot: a snapshot chosen in the sheet applies to this run only.
+        val picked = c98260ProfileOverride
+        c98260ProfileOverride = null
+        val profile = picked
+            ?: ProfileStore.loadC98260(this, info.kernel)?.let(Cve98260Profile::parse)
         if (profile == null) {
             logLine("<i> no parsed profile for ${info.kernel}; the built-in table is used")
+        } else {
+            // The poke switches read these two addresses; printing them makes "where did
+            // ffffffc00a01d5f8 come from" answerable from the log alone.
+            logLine(
+                "<i> profile ${profile.release}: kptr=${hexOrUnset(profile.kptrLink)}" +
+                    " panic=${hexOrUnset(profile.panicLink)}"
+            )
         }
         val result = Cve98260Runner.run(
             context = this,
@@ -1778,10 +1957,19 @@ class MainActivity : AppCompatActivity() {
             // A slide from the KASLR card skips calibration A; a null one lets the payload
             // measure it again, which is what it did before the card existed.
             slide = kaslrSlide.value,
+            extraArgs = extraArgs,
         )
-        ExploitMemory.record(this, info.kernel, result.handoff.rooted, ExploitMemory.ENGINE_C98260)
+        if (recordOutcome) {
+            ExploitMemory.record(
+                this, info.kernel, result.handoff.rooted, ExploitMemory.ENGINE_C98260,
+            )
+        }
         return reportHandoff(ksud, result.handoff, result.exitCode)
     }
+
+    /** `0x…`, or `unset` for the zero that means "this profile does not carry the symbol". */
+    private fun hexOrUnset(value: Long): String =
+        if (value == 0L) "unset" else "0x" + java.lang.Long.toHexString(value)
 
     /**
      * CVE-2026-98260, short path: same payload with `--selinux-only`. It stops as soon as

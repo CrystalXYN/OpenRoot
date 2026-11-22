@@ -105,6 +105,11 @@ object BootProfileBuilder {
         "root_user" to 0L,
         "init_groups" to 0L,
         "init_ucounts" to 0L,
+        // `--poke` targets. Optional: an older or trimmed kernel simply omits them, and the
+        // payload then keeps its built-in 6.1.134 addresses instead of writing to a zero.
+        "kptr_restrict" to 0L,
+        "sysctl_perf_event_paranoid" to 0L,
+        "panic_on_oops" to 0L,
     )
 
     /**
@@ -239,6 +244,9 @@ object BootProfileBuilder {
             credOffUserNs = credFields.getValue("cred_user_ns")!!,
             credOffUcounts = credFields.getValue("cred_ucounts")!!,
             credOffGroups = credFields.getValue("cred_groups")!!,
+            kptrLink = resolved["kptr_restrict"] ?: 0L,
+            paranoidLink = resolved["sysctl_perf_event_paranoid"] ?: 0L,
+            panicLink = resolved["panic_on_oops"] ?: 0L,
         )
         return C98260Build(profile, derived, missing.distinct(), notes.distinct())
     }

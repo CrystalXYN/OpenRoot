@@ -59,6 +59,29 @@ object ProfileStore {
         list(context).firstOrNull { it.release == release }
 
     /**
+     * Releases that carry a CVE-2026-98260 snapshot, newest first.
+     *
+     * Separate from [list]: the two formats are saved by the same parse but a release can have one
+     * without the other (an imported 43499 offsets file has no link-time addresses). The 98260
+     * sheet lists exactly what it can stage, so a release that would fall back to the built-in
+     * table is not offered as if it were parsed.
+     */
+    fun listC98260(context: Context): List<Entry> =
+        dir(context).listFiles { f -> f.isFile && f.name.endsWith(C98260_SUFFIX) }
+            ?.map { file ->
+                val release = file.name.removeSuffix(C98260_SUFFIX)
+                val meta = prefs(context).getString(KEY_META_PREFIX + release, null)
+                Entry(
+                    release = release,
+                    file = file,
+                    sourceName = meta?.substringBefore('|').orEmpty(),
+                    savedAt = meta?.substringAfter('|')?.toLongOrNull() ?: file.lastModified(),
+                )
+            }
+            ?.sortedByDescending { it.savedAt }
+            .orEmpty()
+
+    /**
      * Writes [bytes] for [release]. [activate] is false for imported offsets whose release does
      * not match the running kernel: silently making them active would aim the payload at the wrong
      * build, so the user has to pick it explicitly from the list instead.

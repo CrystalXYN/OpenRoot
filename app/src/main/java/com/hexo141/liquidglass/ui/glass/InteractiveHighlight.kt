@@ -98,28 +98,37 @@ half4 main(float2 coord) {
 
     val gestureModifier: Modifier =
         Modifier.pointerInput(animationScope) {
-            inspectDragGestures(
-                onDragStart = { down ->
-                    startPosition = down.position
-                    animationScope.launch {
-                        launch { pressProgressAnimation.animateTo(1f, pressProgressAnimationSpec) }
-                        launch { positionAnimation.snapTo(startPosition) }
-                    }
-                },
-                onDragEnd = {
-                    animationScope.launch {
-                        launch { pressProgressAnimation.animateTo(0f, pressProgressAnimationSpec) }
-                        launch { positionAnimation.animateTo(startPosition, positionAnimationSpec) }
-                    }
-                },
-                onDragCancel = {
-                    animationScope.launch {
-                        launch { pressProgressAnimation.animateTo(0f, pressProgressAnimationSpec) }
-                        launch { positionAnimation.animateTo(startPosition, positionAnimationSpec) }
-                    }
+            val settle = {
+                animationScope.launch {
+                    launch { pressProgressAnimation.animateTo(0f, pressProgressAnimationSpec) }
+                    launch { positionAnimation.animateTo(startPosition, positionAnimationSpec) }
                 }
-            ) { change, _ ->
-                animationScope.launch { positionAnimation.snapTo(change.position) }
+            }
+            // Same gap as in [DampedDragAnimation]: a cancelled pointer stream never reaches
+            // `onDragEnd`/`onDragCancel`, and the white sheen would stay lit over the capsule.
+            var ended = false
+            try {
+                inspectDragGestures(
+                    onDragStart = { down ->
+                        startPosition = down.position
+                        animationScope.launch {
+                            launch { pressProgressAnimation.animateTo(1f, pressProgressAnimationSpec) }
+                            launch { positionAnimation.snapTo(startPosition) }
+                        }
+                    },
+                    onDragEnd = {
+                        ended = true
+                        settle()
+                    },
+                    onDragCancel = {
+                        ended = true
+                        settle()
+                    }
+                ) { change, _ ->
+                    animationScope.launch { positionAnimation.snapTo(change.position) }
+                }
+            } finally {
+                if (!ended) settle()
             }
         }
 }

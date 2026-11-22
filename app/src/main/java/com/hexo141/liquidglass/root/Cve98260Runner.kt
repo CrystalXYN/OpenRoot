@@ -93,6 +93,9 @@ object Cve98260Runner {
      * @param selinuxOnly stop right after `selinux_enforcing` is cleared: no cred rewrite, no
      *        bootstrap, no handoff probe. The payload prints `C98260_SELINUX_ONLY_DONE=1`
      *        (plus `C98260_SELINUX_UNVERIFIED=1` when the enforce readback was skipped)
+     * @param extraArgs arguments from the 98260 options sheet, already in payload order. Only the
+     *        switches this app does not own arrive here: `--slide`, `--profile`, `--color` and
+     *        `--no-ksu` are built above, and `--selinux-only` has its own flag.
      */
     @Throws(Exception::class)
     fun run(
@@ -105,6 +108,7 @@ object Cve98260Runner {
         onProgress: (Float) -> Unit = {},
         slide: Long? = null,
         selinuxOnly: Boolean = false,
+        extraArgs: List<String> = emptyList(),
     ): Result {
         val payloadFile = File(context.applicationInfo.nativeLibraryDir, PAYLOAD)
         require(payloadFile.isFile) {
@@ -179,21 +183,40 @@ object Cve98260Runner {
         }
         val slideArg = slide?.let { " --slide 0x" + java.lang.Long.toHexString(it) }.orEmpty()
         val modeArg = if (selinuxOnly) " --selinux-only" else ""
+        val extraArg = if (extraArgs.isEmpty()) "" else
+            " " + extraArgs.joinToString(" ") { shellQuote(it) }
+        // A successful full run leaves the parent waiting for the child that pins the forged cred
+        // page, by design - on a terminal that is a feature. Here it means every run would sit on
+        // the stream until the watchdog fires, so the app asks for the documented handoff instead:
+        // the child turns daemon and keeps the page, the parent returns and the log stays live.
+        val lifecycleArg =
+            if (!selinuxOnly && !skipsHandoff(extraArgs)) " --daemon-exit" else ""
 
         onLine("$ cd $STAGE_DIR && OPENROOT_HANDOFF=$STAGE_DIR/$BOOTSTRAP_REMOTE " +
-            "./$PAYLOAD --color=never --no-ksu$profileArg$slideArg$modeArg")
+            "./$PAYLOAD --color=never --no-ksu$profileArg$slideArg$modeArg$extraArg$lifecycleArg")
         var selinuxDone = false
         var selinuxUnverified = false
+        // This payload version does not stage `bootstrap`: the root it leaves behind is the
+        // netcat shell it forks at the end. Keeping its port lets a successful run say so instead
+        // of inheriting the bootstrap probe's "did not run" verdict.
+        var netshellPort: Int? = null
         val exitCode = AdbShell.stream(
             manager,
             "cd $STAGE_DIR && TMPDIR=$STAGE_DIR HOME=$STAGE_DIR " +
                 "OPENROOT_HANDOFF=$STAGE_DIR/$BOOTSTRAP_REMOTE C98260_VERBOSE=1 " +
-                "./$PAYLOAD --color=never --no-ksu$profileArg$slideArg$modeArg 2>&1",
+                "./$PAYLOAD --color=never --no-ksu$profileArg$slideArg$modeArg$extraArg$lifecycleArg 2>&1",
             { line ->
                 // The SELinux verdict arrives as a `C98260_*` protocol line, which is not shown
                 // in the log - read it from the raw line, not from what survives filtering.
                 if (line.contains(SELINUX_ONLY_DONE)) selinuxDone = true
                 if (line.contains(SELINUX_ONLY_UNVERIFIED)) selinuxUnverified = true
+                if (netshellPort == null && line.contains("网络终端已开放")) {
+                    val at = line.lastIndexOf("端口 ")
+                    if (at >= 0) {
+                        netshellPort = line.substring(at + 3).trim()
+                            .takeWhile { it.isDigit() }.toIntOrNull()
+                    }
+                }
                 val cleaned = cleanStatus(line)
                 if (cleaned.isNotEmpty()) {
                     stageProgress(cleaned)?.let(onProgress)
@@ -216,9 +239,57 @@ object Cve98260Runner {
             return Result(exitCode, RootHandoff.Result(RootHandoff.State.NONE, emptySet(), detail))
         }
 
+        // The argument modes end inside the payload; there is no root to hand off.
+        if (skipsHandoff(extraArgs)) {
+            onProgress(1f)
+            return Result(
+                exitCode,
+                RootHandoff.Result(
+                    RootHandoff.State.NONE,
+                    emptySet(),
+                    "finished before the root handoff",
+                ),
+            )
+        }
+
         val handoff = RootHandoff.probe(manager, onLine, waitMs = 20_000)
         onProgress(1f)
+        // The dfm markers belong to `bootstrap`, which this payload never runs. When the run
+        // succeeded and the root shell came up, say that instead of "bootstrap did not run".
+        val port = netshellPort
+        if (handoff.state == RootHandoff.State.NONE && exitCode == 0 && port != null) {
+            return Result(
+                exitCode,
+                RootHandoff.Result(
+                    RootHandoff.State.NONE,
+                    handoff.markers,
+                    "root shell is listening on port $port",
+                ),
+            )
+        }
         return Result(exitCode, handoff)
+    }
+
+    /**
+     * True for the modes that end inside the payload.
+     *
+     * `--lmap-only`, `--cred-only`, the address gate, the profile dump and every `--poke*` return
+     * before the cred rewrite. Probing for a handoff afterwards would stall on its timeout and then
+     * report "no root" for a run that never promised one.
+     */
+    private fun skipsHandoff(args: List<String>): Boolean = args.any {
+        it == "--lmap-only" || it == "--cred-only" || it == "--check-target" ||
+            it == "--dump-config" || it == "--test-log" || it.startsWith("--poke")
+    }
+
+    /**
+     * The command line goes through `sh -c` on the device, so a value with spaces (`--exec`'s
+     * command) has to survive the shell. Plain flags and hex addresses are left bare, which keeps
+     * the echoed line readable.
+     */
+    private fun shellQuote(arg: String): String {
+        if (arg.isNotEmpty() && arg.all { it.isLetterOrDigit() || it in "-_./:=+@," }) return arg
+        return "'" + arg.replace("'", "'\\''") + "'"
     }
 
     /**

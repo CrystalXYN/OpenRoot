@@ -85,6 +85,12 @@ object RootHandoff {
         log: (String) -> Unit = {},
         waitMs: Long = 15_000,
     ): Result {
+        if (ExploitStop.stopRequested) {
+            // A killed payload leaves no markers; waiting the full window would keep the log page
+            // in "stopping" long after the user asked for it to end.
+            log("$ handoff skipped: force stop")
+            return Result(State.NONE, emptySet(), "stopped by the user", Payload.NONE)
+        }
         val seconds = (waitMs / 1000).toInt().coerceIn(1, 60)
         log("$ [waiting up to ${seconds}s for /dev/dfm*]")
         val listing = runCatching {

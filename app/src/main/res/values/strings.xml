@@ -103,6 +103,7 @@
     <!-- Engine picker -->
     <string name="picker_select_vulnerability">Select vulnerability</string>
     <string name="picker_run">Run</string>
+    <string name="picker_options">Options</string>
     <string name="picker_unavailable">Unavailable</string>
     <string name="common_cancel">Cancel</string>
 
@@ -110,6 +111,9 @@
     <string name="log_title">Exploit log</string>
     <string name="log_command_hint">Run a command as root</string>
     <string name="log_command_run">Run</string>
+    <string name="log_force_stop">Force stop</string>
+    <string name="log_force_stopping">Stopping…</string>
+    <string name="log_force_stopped">Stopped by the user</string>
     <string name="exploit_log_open">Open exploit log</string>
     <string name="exploit_log_running">Exploit running - open log</string>
 
@@ -164,6 +168,51 @@
     <!-- Chip on the 98260 row: same payload, stops before the cred rewrite. -->
     <string name="engine_only_selinux">Only SELinux</string>
     <string name="engine_c98260_selinux_detail">Sets SELinux permissive, stops before cred</string>
+
+    <!-- CVE-2026-98260 argument sheet. Options already on the main screen (slide, KASLR-only,
+         SELinux-only) are deliberately absent: one setting, one control. -->
+    <string name="c98260_options_title">CVE-2026-98260 options</string>
+    <string name="c98260_options_note">Slide, KASLR-only and SELinux-only already have controls on the main screen and are not repeated here.</string>
+    <string name="c98260_profile_title">Profile</string>
+    <string name="c98260_profile_auto">Auto · this kernel</string>
+    <string name="c98260_profile_note">The snapshot staged as --profile. Auto takes the release read from the device; a picked one overrides it, and its kptr / panic addresses come from the same kallsyms pass.</string>
+    <string name="c98260_profile_none">No parsed snapshot on this device: the built-in table is used. Import a boot.img on the Profile tab to make one selectable here.</string>
+    <string name="c98260_mode_title">Mode</string>
+    <string name="c98260_mode_full">Full escalation</string>
+    <string name="c98260_mode_poke">Write zero</string>
+    <string name="c98260_mode_lmap">Leak page_offset</string>
+    <string name="c98260_mode_cred">Probe cred</string>
+    <string name="c98260_mode_check">Check target</string>
+    <string name="c98260_mode_dump">Dump profile</string>
+    <string name="c98260_poke_title">Targets</string>
+    <string name="c98260_poke_panic">panic_on_oops = 0</string>
+    <string name="c98260_poke_panic_note">Clears panic_timeout too, and always runs first</string>
+    <string name="c98260_poke_kptr">kptr_restrict, perf_event_paranoid = 0</string>
+    <string name="c98260_poke_kptr_note">Opens /proc/kallsyms to unprivileged readers</string>
+    <string name="c98260_poke_builtin_note">The two built-in targets read kptr_restrict, perf_event_paranoid and panic_on_oops from the selected profile (its boot.img kallsyms). Without them only 6.1.134 falls back to built-in values; other KMIs skip the target instead of writing a wrong address.</string>
+    <string name="c98260_poke_abs">Absolute addresses</string>
+    <string name="c98260_poke_abs_hint">0x… , comma or line separated</string>
+    <string name="c98260_poke_link">Link-time addresses</string>
+    <string name="c98260_poke_link_hint">0x… , the slide is added by the payload</string>
+    <string name="c98260_poke_retry">Retries</string>
+    <string name="c98260_poke_retry_note">Each address costs one UAF and one parked child</string>
+    <string name="c98260_no_slide">No slide yet: the payload calibrates it first, and skips link-time targets if that fails</string>
+    <string name="c98260_extra_title">Escalation</string>
+    <string name="c98260_skip_check">Skip the SELinux readback</string>
+    <string name="c98260_skip_check_note">Writes 0 without checking the current state</string>
+    <string name="c98260_netshell">Root shell port</string>
+    <string name="c98260_netshell_hint">9826</string>
+    <string name="c98260_page_offset">page_offset override</string>
+    <string name="c98260_page_offset_hint">0x… from Leak page_offset</string>
+    <string name="c98260_calib_title">Calibration</string>
+    <string name="c98260_va_bits">VA bits</string>
+    <string name="c98260_va_bits_hint">39 by default, 48 on 48-bit kernels</string>
+    <string name="c98260_max_slide">Slide window upper bound</string>
+    <string name="c98260_max_slide_hint">0x… , custom kernels only</string>
+    <string name="c98260_set">Profile overrides</string>
+    <string name="c98260_set_hint">key=0x… , one per line</string>
+    <string name="c98260_preview">$ %1$s</string>
+    <string name="c98260_run">Run</string>
     <string name="engine_no_port">No ported build for this device</string>
     <string name="engine_pct_detail">Race, up to 32 attempts, SELinux stays off, %1$s</string>
     <string name="engine_gpu_unsupported">GPU not supported</string>

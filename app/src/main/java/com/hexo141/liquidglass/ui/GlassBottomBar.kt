@@ -127,7 +127,10 @@ fun GlassBottomBar(
                 valueRange = 0f..(tabsCount - 1).toFloat(),
                 visibilityThreshold = 0.001f,
                 initialScale = 1f,
-                pressedScale = 78f / 56f,
+                // 56dp -> 60dp: the sample's 78/56 was sized for a 78dp bar, and with this bar's
+                // 64dp the pressed capsule grew past the glass on all four sides, so its highlight
+                // read as a white ring floating outside the bar instead of a pressed pill.
+                pressedScale = 60f / 56f,
                 onDragStarted = {},
                 onDragStopped = {
                     val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
@@ -271,6 +274,18 @@ fun GlassBottomBar(
                         val velocity = dampedDragAnimation.velocity / 10f
                         scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
                         scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+                        // Ceiling per axis so the capsule stays inside the glass: the bar is 64dp
+                        // tall and the pill sits 4dp in from each end, so growing past those
+                        // bounds is what made its highlight read as a white ring floating
+                        // outside the bar instead of a pressed pill.
+                        if (size.height > 0f) {
+                            scaleY = scaleY.coerceAtMost(64f.dp.toPx() / size.height)
+                        }
+                        if (size.width > 0f) {
+                            scaleX = scaleX.coerceAtMost(
+                                (size.width + 8f.dp.toPx()) / size.width
+                            )
+                        }
                     },
                     onDrawSurface = {
                         val progress = dampedDragAnimation.pressProgress

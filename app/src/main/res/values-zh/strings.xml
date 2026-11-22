@@ -104,6 +104,7 @@
     <!-- 漏洞选择 -->
     <string name="picker_select_vulnerability">选择漏洞</string>
     <string name="picker_run">执行</string>
+    <string name="picker_options">参数</string>
     <string name="picker_unavailable">不可用</string>
     <string name="common_cancel">取消</string>
 
@@ -111,6 +112,9 @@
     <string name="log_title">提权日志</string>
     <string name="log_command_hint">以 root 身份执行命令</string>
     <string name="log_command_run">执行</string>
+    <string name="log_force_stop">强行停止</string>
+    <string name="log_force_stopping">正在停止…</string>
+    <string name="log_force_stopped">已强行停止</string>
     <string name="exploit_log_open">打开提权日志</string>
     <string name="exploit_log_running">正在提权 - 打开日志</string>
 
@@ -165,6 +169,51 @@
     <!-- 98260 行上的次级动作：同一载荷，但是在改写 cred 前停止 -->
     <string name="engine_only_selinux">仅关 SELinux</string>
     <string name="engine_c98260_selinux_detail">将 SELinux 设为宽容模式，在改写 cred 前停止</string>
+
+    <!-- CVE-2026-98260 参数面板。主界面已有的 slide / 仅 KASLR / 仅 SELinux 不在此重复：
+         一个设置只留一个入口。 -->
+    <string name="c98260_options_title">CVE-2026-98260 参数</string>
+    <string name="c98260_options_note">slide、仅 KASLR、仅 SELinux 已在主界面提供，这里不再重复。</string>
+    <string name="c98260_profile_title">画像</string>
+    <string name="c98260_profile_auto">自动 · 当前内核</string>
+    <string name="c98260_profile_note">作为 --profile 推给载荷的画像。自动 = 按设备读到的 release 匹配；选中某个 release 会覆盖它，其 kptr / panic 地址同样来自那次 kallsyms 提取。</string>
+    <string name="c98260_profile_none">本机还没有解析过 boot.img，只能使用载荷内置表。到「画像」页导入 boot.img 后，这里才会出现可选项。</string>
+    <string name="c98260_mode_title">模式</string>
+    <string name="c98260_mode_full">完整提权</string>
+    <string name="c98260_mode_poke">写零直通车</string>
+    <string name="c98260_mode_lmap">仅泄露 page_offset</string>
+    <string name="c98260_mode_cred">仅探测 cred</string>
+    <string name="c98260_mode_check">校验目标地址</string>
+    <string name="c98260_mode_dump">打印画像</string>
+    <string name="c98260_poke_title">写入目标</string>
+    <string name="c98260_poke_panic">panic_on_oops = 0</string>
+    <string name="c98260_poke_panic_note">连带清零 panic_timeout，且总是第一个执行</string>
+    <string name="c98260_poke_kptr">kptr_restrict、perf_event_paranoid = 0</string>
+    <string name="c98260_poke_kptr_note">解除 /proc/kallsyms 对普通用户的遮蔽</string>
+    <string name="c98260_poke_builtin_note">两个内置目标的地址取自所选画像（boot.img 的 kallsyms）：kptr_restrict、perf_event_paranoid、panic_on_oops。画像缺符号时只有 6.1.134 回退内置值，其它内核直接跳过该目标，不会往错地址写。</string>
+    <string name="c98260_poke_abs">绝对地址</string>
+    <string name="c98260_poke_abs_hint">0x… ，逗号或换行分隔</string>
+    <string name="c98260_poke_link">链接地址</string>
+    <string name="c98260_poke_link_hint">0x… ，由载荷自动加 slide</string>
+    <string name="c98260_poke_retry">重试次数</string>
+    <string name="c98260_poke_retry_note">每个地址消耗一次 UAF 和一个守墓进程</string>
+    <string name="c98260_no_slide">尚未校准 slide：载荷会先跑校准 A，失败则跳过链接地址目标</string>
+    <string name="c98260_extra_title">提权选项</string>
+    <string name="c98260_skip_check">跳过 SELinux 前置判定</string>
+    <string name="c98260_skip_check_note">不读当前 enforce，直接写 0</string>
+    <string name="c98260_netshell">root shell 端口</string>
+    <string name="c98260_netshell_hint">9826</string>
+    <string name="c98260_page_offset">覆盖 page_offset</string>
+    <string name="c98260_page_offset_hint">0x… ，来自「仅泄露 page_offset」</string>
+    <string name="c98260_calib_title">校准参数</string>
+    <string name="c98260_va_bits">VA 位数</string>
+    <string name="c98260_va_bits_hint">默认 39，48 位内核填 48</string>
+    <string name="c98260_max_slide">slide 窗口上界</string>
+    <string name="c98260_max_slide_hint">0x… ，仅定制内核需要</string>
+    <string name="c98260_set">画像字段覆盖</string>
+    <string name="c98260_set_hint">key=0x… ，每行一个</string>
+    <string name="c98260_preview">$ %1$s</string>
+    <string name="c98260_run">执行</string>
     <string name="engine_no_port">没有适配此机型的移植版本</string>
     <string name="engine_pct_detail">竞争利用，最多 32 次尝试，SELinux 保持关闭，%1$s</string>
     <string name="engine_gpu_unsupported">不支持此 GPU</string>

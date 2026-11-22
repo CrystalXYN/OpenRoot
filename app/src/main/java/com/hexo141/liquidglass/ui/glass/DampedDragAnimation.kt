@@ -80,24 +80,40 @@ class DampedDragAnimation(
         private set
 
     val modifier: Modifier = Modifier.pointerInput(Unit) {
-        inspectDragGestures(
-            onDragStart = { down ->
-                isDragging = true
-                onDragStarted(down.position)
-                press()
-            },
-            onDragEnd = {
-                isDragging = false
-                onDragStopped()
-                release()
-            },
-            onDragCancel = {
+        // `awaitEachGesture` does not report every touch ending: a pointer stream cancelled from
+        // above (another window taking focus, the system screenshot gesture, a panel opening) is
+        // unwound as a cancellation, so neither `onDragEnd` nor `onDragCancel` runs and the
+        // capsule stays enlarged with its highlight ring until the next touch. `ended` plus the
+        // `finally` make every exit - normal, cancelled, disposed - release the press.
+        var ended = false
+        try {
+            inspectDragGestures(
+                onDragStart = { down ->
+                    isDragging = true
+                    onDragStarted(down.position)
+                    press()
+                },
+                onDragEnd = {
+                    ended = true
+                    isDragging = false
+                    onDragStopped()
+                    release()
+                },
+                onDragCancel = {
+                    ended = true
+                    isDragging = false
+                    onDragStopped()
+                    release()
+                }
+            ) { change, dragAmount ->
+                onDrag(size, dragAmount)
+            }
+        } finally {
+            if (!ended) {
                 isDragging = false
                 onDragStopped()
                 release()
             }
-        ) { change, dragAmount ->
-            onDrag(size, dragAmount)
         }
     }
 

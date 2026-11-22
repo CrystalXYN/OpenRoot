@@ -62,6 +62,11 @@ data class ExploitChoice(
      */
     val altLabel: String? = null,
     val onAlt: (() -> Unit)? = null,
+    /**
+     * Overrides the Run capsule's text for a row whose Run opens a form instead of starting the
+     * payload directly (CVE-2026-98260 asks for arguments first). Null keeps "Run".
+     */
+    val runLabel: String? = null,
 )
 
 /**
@@ -188,11 +193,11 @@ fun EnginePicker(
                                 Column(horizontalAlignment = Alignment.End) {
                                     PickerChip(text = choice.altLabel, onClick = choice.onAlt)
                                     Spacer(Modifier.height(6.dp))
-                                    PickerButton(text = stringResource(R.string.picker_run)) {
+                                    PickerButton(text = choice.runLabel ?: stringResource(R.string.picker_run)) {
                                         onPick(choice.id)
                                     }
                                 }
-                            choice.enabled -> PickerButton(text = stringResource(R.string.picker_run)) {
+                            choice.enabled -> PickerButton(text = choice.runLabel ?: stringResource(R.string.picker_run)) {
                                 onPick(choice.id)
                             }
                             choice.fixLabel != null && choice.onFix != null ->
