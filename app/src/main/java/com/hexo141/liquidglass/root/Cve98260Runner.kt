@@ -40,6 +40,17 @@ object Cve98260Runner {
     /** `--kaslr-only` prints exactly one of these; nothing else in the stream matches. */
     private const val SLIDE_MARKER = "C98260_SLIDE=0x"
 
+    /**
+     * Backstop for a payload that only printed the human-readable line.
+     *
+     * 71b7db6 replaced the `printf("C98260_SLIDE=…")` protocol line with `LOG_LEAK("[slide] …")`,
+     * so builds after it leaked the slide into the log and still reported "no slide". The payload
+     * prints the marker again, but a stale copy left in `/data/local/tmp/openroot` (push that
+     * silently failed, or a device that skipped the staging fix) would still hit the old build —
+     * the value in the log is identical either way, so parse it too.
+     */
+    private val SLIDE_LOG_LINE = Regex("""(?:仅泄露 KASLR slide[：:]|\[slide\] )0x([0-9a-fA-F]+)""")
+
     /** Printed by `--selinux-only` when the payload stops before touching cred. */
     private const val SELINUX_ONLY_DONE = "C98260_SELINUX_ONLY_DONE=1"
 
@@ -393,6 +404,9 @@ object Cve98260Runner {
                         val end = raw.indexOfFirst { !it.isLetterOrDigit() }
                         val value = if (end < 0) raw else raw.substring(0, end)
                         slide = value.toLongOrNull(16)
+                    } else {
+                        slide = SLIDE_LOG_LINE.find(line)
+                            ?.groupValues?.get(1)?.toLongOrNull(16)
                     }
                 }
                 val cleaned = cleanStatus(line)
