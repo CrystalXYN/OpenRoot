@@ -57,6 +57,30 @@ object Cve98260Runner {
     fun isPayloadPresent(context: Context): Boolean =
         File(context.applicationInfo.nativeLibraryDir, PAYLOAD).isFile
 
+    /**
+     * Fails the run when the staged file does not have the exact size of the APK copy.
+     *
+     * The push path is a shell pipeline (`cat > tmp && mv`), so a permission problem, a full
+     * `/data/local/tmp` or an interrupted stream shows up as a shorter file rather than an
+     * exception. Comparing sizes is cheap and turns that into one clear error.
+     */
+    private fun verifyStaged(manager: AbsAdbConnectionManager, remotePath: String, expected: Long) {
+        // The rename runs after the byte stream closes, so allow a few short polls instead of
+        // failing on a file that is still being moved into place.
+        var actual: Long? = null
+        for (attempt in 0 until 10) {
+            actual = AdbShell.exec(manager, "wc -c < '$remotePath' 2>/dev/null")
+                .trim().toLongOrNull()
+            if (actual == expected) return
+            Thread.sleep(100)
+        }
+        if (actual != expected) {
+            throw IllegalStateException(
+                "staged $remotePath is ${actual ?: "missing"} bytes, expected $expected"
+            )
+        }
+    }
+
     /** A parsed profile for this exact release, or the two releases the payload has built in. */
     fun hasProfile(context: Context, release: String): Boolean {
         if (release.isEmpty()) return false
@@ -127,14 +151,26 @@ object Cve98260Runner {
                 ),
             )
         )
-        AdbShell.exec(manager, "mkdir -p $STAGE_DIR")
+        // Drop the previous copy first. `push` already renames over it, but a stale
+        // `libcve98260.so` left resident by `--daemon-exit` (or by a stopped `--exec-hold`
+        // child) keeps the old inode alive, and a user comparing timestamps would still see the
+        // old build. Removing the directory entry makes the next run unambiguous.
+        AdbShell.exec(
+            manager,
+            "mkdir -p $STAGE_DIR && rm -f $STAGE_DIR/$PAYLOAD $STAGE_DIR/$BOOTSTRAP_REMOTE " +
+                "$STAGE_DIR/$PAYLOAD.push $STAGE_DIR/$BOOTSTRAP_REMOTE.push",
+        )
 
         AdbShell.push(manager, "$STAGE_DIR/$PAYLOAD", payloadFile.readBytes())
         onProgress(0.12f)
+        // A silent ETXTBSY used to leave the device on the previous build while the app showed
+        // the new one. Compare sizes so a truncated or skipped stage fails here, not in the log.
+        verifyStaged(manager, "$STAGE_DIR/$PAYLOAD", payloadFile.length())
         AdbShell.exec(manager, "chmod 755 $STAGE_DIR/$PAYLOAD")
 
         // The handoff target: bootstrap reads openroot.xml and decides late-load vs command channel.
         AdbShell.push(manager, "$STAGE_DIR/$BOOTSTRAP_REMOTE", bootstrap.readBytes())
+        verifyStaged(manager, "$STAGE_DIR/$BOOTSTRAP_REMOTE", bootstrap.length())
         onProgress(0.2f)
         AdbShell.exec(manager, "chmod 755 $STAGE_DIR/$BOOTSTRAP_REMOTE")
 

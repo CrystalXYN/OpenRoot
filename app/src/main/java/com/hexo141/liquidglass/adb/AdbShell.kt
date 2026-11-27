@@ -118,11 +118,27 @@ object AdbShell {
         return exitCode
     }
 
-    /** Writes [bytes] to [remotePath] through the daemon's shell. */
+    /**
+     * Writes [bytes] to [remotePath] through the daemon's shell.
+     *
+     * The write goes to a sibling temp file and is renamed into place, never streamed straight
+     * into the target. `cat > target` fails with ETXTBSY when the old payload is still resident -
+     * a `--daemon-exit` shell or a stopped `--exec-hold` child keeps the inode mapped - and that
+     * failure is invisible from here: the first 32 KB chunk lands in the socket buffer before
+     * `cat` exits, so [write] returns happily and the device keeps running the previous build.
+     * `rename(2)` replaces the directory entry instead of truncating the inode, so it succeeds
+     * even while the old binary is executing, and the next launch picks up the new one.
+     *
+     * `chmod 755` rides along in the same shell command on purpose: the runners' own `chmod`
+     * afterwards would race the rename and could end up applying to the old inode.
+     */
     @Throws(Exception::class)
     fun push(manager: AbsAdbConnectionManager, remotePath: String, bytes: ByteArray) {
         if (ShizukuShell.isAuthorized()) return ShizukuShell.push(remotePath, bytes)
-        val stream = manager.openStream("shell:cat > '$remotePath'")
+        val tmp = "$remotePath.push"
+        val stream = manager.openStream(
+            "shell:rm -f '$tmp' && cat > '$tmp' && chmod 755 '$tmp' && mv -f '$tmp' '$remotePath'"
+        )
         try {
             var offset = 0
             while (offset < bytes.size) {
@@ -131,6 +147,13 @@ object AdbShell {
                 offset += length
             }
             stream.flush()
+            // Drain to EOF so `mv` has actually run before the caller stats the file. The shell
+            // command emits nothing, so this returns as soon as the pipeline exits.
+            val sink = ByteArray(256)
+            while (true) {
+                val n = try { stream.read(sink, 0, sink.size) } catch (_: IOException) { break }
+                if (n <= 0) break
+            }
         } finally {
             runCatching { stream.close() }
         }

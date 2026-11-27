@@ -185,7 +185,10 @@ object ShizukuShell {
     /** Writes [bytes] to [remotePath] through the Shizuku shell. */
     @Throws(IOException::class)
     fun push(remotePath: String, bytes: ByteArray) {
-        val process = start("cat > '$remotePath'")
+        // Same reason as AdbShell.push: rename, don't truncate. A resident payload holds the
+        // inode, so `cat > target` dies with ETXTBSY after the bytes have already left the app.
+        val tmp = "$remotePath.push"
+        val process = start("rm -f '$tmp' && cat > '$tmp' && chmod 755 '$tmp' && mv -f '$tmp' '$remotePath'")
         process.outputStream.use { stream ->
             stream.write(bytes)
             stream.flush()
