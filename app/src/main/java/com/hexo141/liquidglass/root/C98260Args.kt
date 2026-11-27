@@ -3,11 +3,11 @@ package com.hexo141.liquidglass.root
 /**
  * The 98260 payload's own command line, minus the switches this app already owns.
  *
- * `--slide` and `--kaslr-only` live on the KASLR card, `--selinux-only` is the chip on the row,
- * `--profile` is staged from the parsed snapshot, and `--color` / `--no-ksu` are fixed by the
- * runner. The rest of `-h` is reachable from [toArgs]. Only switches the packaged payload actually
- * parses are listed: a field here that `native-posix/cve98260.c` does not know makes it print
- * "unknown argument" and exit before doing anything.
+ * `--slide` and `--kaslr-only` live on the KASLR card, `--profile` is staged from the parsed
+ * snapshot, and `--color` / `--no-ksu` are fixed by the runner. The rest of `-h` is reachable from
+ * [toArgs]. Only switches the packaged payload actually parses are listed: a field here that
+ * `native-posix/cve98260.c` does not know makes it print "unknown argument" and exit before doing
+ * anything.
  *
  * `--poke*` is an independent endpoint: the payload writes eight zero bytes per address and exits
  * without touching SELinux or cred. Its targets are the "clearing is the safe direction" globals -
@@ -16,6 +16,14 @@ package com.hexo141.liquidglass.root
 enum class C98260Mode {
     /** The normal chain: SELinux off, forged cred, root handoff. */
     FULL,
+
+    /**
+     * `--selinux-only`: clear `selinux_enforcing` and stop before the cred rewrite.
+     *
+     * Same payload, same profile, same UAF; only the stopping point moves. It used to be a second
+     * chip on the vulnerability row, which made a one-run-only variant look like a second exploit.
+     */
+    SELINUX,
 
     /** `--lmap-only`: calibration A + B, print `page_offset`, exit. */
     LMAP,
@@ -79,6 +87,12 @@ data class C98260Args(
             C98260Mode.FULL -> {
                 if (skipSelinuxCheck) out += "--skip-selinux-check"
                 port()?.let { out += listOf("--netshell-port", it) }
+            }
+            C98260Mode.SELINUX -> {
+                out += "--selinux-only"
+                // Legal here too, and more useful than on any other mode: without the readback the
+                // run reports "write executed, not verified" instead of waiting for enforcement.
+                if (skipSelinuxCheck) out += "--skip-selinux-check"
             }
             C98260Mode.LMAP -> out += "--lmap-only"
             C98260Mode.CRED -> out += "--cred-only"

@@ -165,27 +165,25 @@
     <string name="engine_kernel_old">Kernel older than 5.7</string>
     <string name="engine_parse_first">Parse this kernel\'s boot.img in Profile first</string>
     <string name="engine_c98260_detail">POSIX timer race, up to 24 rounds, %1$s</string>
-    <!-- Chip on the 98260 row: same payload, stops before the cred rewrite. -->
-    <string name="engine_only_selinux">Only SELinux</string>
-    <string name="engine_c98260_selinux_detail">Sets SELinux permissive, stops before cred</string>
-
-    <!-- CVE-2026-98260 argument sheet. Options already on the main screen (slide, KASLR-only,
-         SELinux-only) are deliberately absent: one setting, one control. -->
+    <!-- CVE-2026-98260 argument sheet. Options already on the main screen (slide, KASLR-only)
+         are deliberately absent: one setting, one control. SELinux-only is a mode here. -->
     <string name="c98260_options_title">CVE-2026-98260 options</string>
-    <string name="c98260_options_note">Slide, KASLR-only and SELinux-only already have controls on the main screen and are not repeated here.</string>
+    <string name="c98260_options_note">Slide and KASLR-only already have controls on the main screen and are not repeated here.</string>
     <string name="c98260_profile_title">Profile</string>
     <string name="c98260_profile_auto">Auto · this kernel</string>
     <string name="c98260_profile_note">The snapshot staged as --profile. Auto takes the release read from the device; a picked one overrides it, and its kptr / panic addresses come from the same kallsyms pass.</string>
     <string name="c98260_profile_none">No parsed snapshot on this device: the built-in table is used. Import a boot.img on the Profile tab to make one selectable here.</string>
     <string name="c98260_mode_title">Mode</string>
     <string name="c98260_mode_full">Full escalation</string>
+    <string name="c98260_mode_selinux">SELinux only</string>
     <string name="c98260_mode_poke">Write zero</string>
     <string name="c98260_mode_lmap">Leak page_offset</string>
     <string name="c98260_mode_cred">Probe cred</string>
     <string name="c98260_mode_check">Check target</string>
     <string name="c98260_mode_dump">Dump profile</string>
-    <string name="c98260_poke_title">Targets</string>
-    <string name="c98260_poke_panic">panic_on_oops = 0</string>
+    <string name="c98260_selinux_title">SELinux only</string>
+    <string name="c98260_selinux_note">Same chain, stopped the moment SELinux reads back permissive: no forged cred, no root shell, nothing left running. The device stays permissive until reboot.</string>
+    <string name="c98260_poke_title">Targets</string>    <string name="c98260_poke_panic">panic_on_oops = 0</string>
     <string name="c98260_poke_panic_note">Clears panic_timeout too, and always runs first</string>
     <string name="c98260_poke_kptr">kptr_restrict, perf_event_paranoid = 0</string>
     <string name="c98260_poke_kptr_note">Opens /proc/kallsyms to unprivileged readers</string>

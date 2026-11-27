@@ -56,13 +56,6 @@ data class ExploitChoice(
     val fixLabel: String? = null,
     val onFix: (() -> Unit)? = null,
     /**
-     * A second action on an enabled row, for the one payload that shares its CVE with another but
-     * deliberately stops short - CVE-2026-98260's `--selinux-only` run. It sits above Run as a
-     * quiet chip so the two entry points stay a single row instead of two.
-     */
-    val altLabel: String? = null,
-    val onAlt: (() -> Unit)? = null,
-    /**
      * Overrides the Run capsule's text for a row whose Run opens a form instead of starting the
      * payload directly (CVE-2026-98260 asks for arguments first). Null keeps "Run".
      */
@@ -187,16 +180,6 @@ fun EnginePicker(
                         }
                         Spacer(Modifier.width(12.dp))
                         when {
-                            // The alternate action stacks above Run rather than beside it: two
-                            // capsules side by side would eat the space the title needs.
-                            choice.enabled && choice.altLabel != null && choice.onAlt != null ->
-                                Column(horizontalAlignment = Alignment.End) {
-                                    PickerChip(text = choice.altLabel, onClick = choice.onAlt)
-                                    Spacer(Modifier.height(6.dp))
-                                    PickerButton(text = choice.runLabel ?: stringResource(R.string.picker_run)) {
-                                        onPick(choice.id)
-                                    }
-                                }
                             choice.enabled -> PickerButton(text = choice.runLabel ?: stringResource(R.string.picker_run)) {
                                 onPick(choice.id)
                             }

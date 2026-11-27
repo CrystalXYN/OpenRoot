@@ -76,9 +76,11 @@ data class C98260ProfileChoice(val release: String, val source: String)
  * preview of the exact arguments.
  *
  * Duplicated entries are deliberate non-entries: `--slide` and `--kaslr-only` stay on the KASLR
- * card, `--selinux-only` stays the chip on the row, `--color` / `--no-ksu` are fixed by the
- * runner. `--profile` is the one thing that moved *into* the sheet: the parsed snapshots are
- * per-release, so pointing a run at a different build is a run-time choice, not a global setting.
+ * card, `--color` / `--no-ksu` are fixed by the runner. `--profile` is the one thing that moved
+ * *into* the sheet: the parsed snapshots are per-release, so pointing a run at a different build is
+ * a run-time choice, not a global setting. `--selinux-only` also lives here as a mode chip - it is
+ * the same chain stopped one step earlier, and a second chip on the vulnerability row made it look
+ * like a separate exploit.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -211,6 +213,14 @@ fun Cve98260Options(
                     ModeChip(stringResource(R.string.c98260_mode_full), state.mode == C98260Mode.FULL) {
                         state = state.copy(mode = C98260Mode.FULL)
                     }
+                    // Same payload, stops before the cred rewrite. It reads as a mode here - it is
+                    // one command line with a different ending, not a second vulnerability.
+                    ModeChip(
+                        stringResource(R.string.c98260_mode_selinux),
+                        state.mode == C98260Mode.SELINUX
+                    ) {
+                        state = state.copy(mode = C98260Mode.SELINUX)
+                    }
                     ModeChip(stringResource(R.string.c98260_mode_poke), state.mode == C98260Mode.POKE) {
                         state = state.copy(mode = C98260Mode.POKE)
                     }
@@ -308,6 +318,26 @@ fun Cve98260Options(
                         )
                     }
 
+                    C98260Mode.SELINUX -> {
+                        Spacer(Modifier.height(12.dp))
+                        SectionLabel(stringResource(R.string.c98260_selinux_title))
+                        BasicText(
+                            text = stringResource(R.string.c98260_selinux_note),
+                            style = TextStyle(
+                                color = Color.White.copy(alpha = 0.45f),
+                                fontSize = 10.sp,
+                                lineHeight = 14.sp,
+                                shadow = optionsShadow
+                            )
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        CheckRow(
+                            checked = state.skipSelinuxCheck,
+                            title = stringResource(R.string.c98260_skip_check),
+                            detail = stringResource(R.string.c98260_skip_check_note)
+                        ) { state = state.copy(skipSelinuxCheck = !state.skipSelinuxCheck) }
+                    }
+
                     C98260Mode.FULL -> {
                         Spacer(Modifier.height(12.dp))
                         SectionLabel(stringResource(R.string.c98260_extra_title))
@@ -327,8 +357,8 @@ fun Cve98260Options(
                     else -> Unit
                 }
 
-                if (state.mode == C98260Mode.FULL || state.mode == C98260Mode.POKE ||
-                    state.mode == C98260Mode.CHECK
+                if (state.mode == C98260Mode.FULL || state.mode == C98260Mode.SELINUX ||
+                    state.mode == C98260Mode.POKE || state.mode == C98260Mode.CHECK
                 ) {
                     Spacer(Modifier.height(10.dp))
                     FieldLabel(stringResource(R.string.c98260_page_offset))

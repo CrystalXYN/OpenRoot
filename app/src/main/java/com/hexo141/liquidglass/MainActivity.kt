@@ -133,13 +133,6 @@ class MainActivity : AppCompatActivity() {
         const val ENGINE_LSPROMISE = "lspromise-49881-43284"
 
         /**
-         * Same payload as [ENGINE_CVE_98260], but it stops right after clearing SELinux. Not a row
-         * of its own: it is the chip on the 98260 row, because it is the same bug with an early
-         * exit, not a second vulnerability.
-         */
-        const val ENGINE_CVE_98260_SELINUX = "cve-2026-98260-selinux"
-
-        /**
          * arm64 puts the image at `BIT(VA_BITS_MIN-3) + (seed & mask)`, so the slide is pinned to a
          * band instead of "anywhere below the VA top". For the default 39-bit VA that band is
          * `[64 GiB, 192 GiB)` step 2 MiB; 48-bit machines use `--va-bits 48` and a far wider band.
@@ -1299,10 +1292,10 @@ class MainActivity : AppCompatActivity() {
                 },
             ),
             /*
-             * One row for CVE-2026-98260, three ways in: Shark's own 6.18 build, the local payload
-             * with a parsed profile, and the same local payload with `--selinux-only`. The last one
-             * stops before the cred rewrite, so it is offered as a chip on the row rather than a
-             * second vulnerability - it never was one.
+             * One row for CVE-2026-98260, two ways in: Shark's own 6.18 build, or the local payload
+             * with a parsed profile. The local payload's early-exit variants - clear SELinux and
+             * stop, write zero, the two leak-only modes - are mode chips inside its argument sheet;
+             * they are the same bug with a different stopping point, not separate vulnerabilities.
              */
             ExploitChoice(
                 id = ENGINE_CVE_98260,
@@ -1317,9 +1310,6 @@ class MainActivity : AppCompatActivity() {
                     else -> getString(R.string.engine_c98260_detail, handoff)
                 },
                 enabled = available.shark98260 || available.c98260,
-                // Only the local payload has the short path; Shark's build runs its own script.
-                altLabel = if (available.c98260) getString(R.string.engine_only_selinux) else null,
-                onAlt = { startExploit(ENGINE_CVE_98260_SELINUX) },
                 // The local payload opens the argument sheet instead of running on the spot;
                 // naming that on the capsule is cheaper than a paragraph in the row's detail.
                 runLabel = if (available.c98260 && !available.shark98260) {
@@ -1647,8 +1637,6 @@ class MainActivity : AppCompatActivity() {
                 }
             ENGINE_CVE_98260 ->
                 if (shark98260 == null && !Cve98260Runner.isSupported(this, info)) return
-            ENGINE_CVE_98260_SELINUX ->
-                if (!Cve98260Runner.isSupported(this, info)) return
             ENGINE_CVE_64560 ->
                 if (!joker && shark64560 == null && pctPayload == null) return
             ENGINE_CVE_21479 -> if (gpuPayload == null) return
@@ -1690,11 +1678,11 @@ class MainActivity : AppCompatActivity() {
                     // 43499: GhostLock54 first, because a profile cannot describe its kernel.
                     engineId == ENGINE_CVE_43499 ->
                         if (ghost54) runGhostLock54Engine() else runProfileEngine(info, ksud)
-                    // 98260: Shark's 6.18 build, else the local payload (which owns the short path).
+                    // 98260: Shark's 6.18 build, else the local payload (whose sheet also owns the
+                    // early-exit modes: SELinux only, write zero, the two leak-only runs).
                     engineId == ENGINE_CVE_98260 ->
                         if (shark98260 != null) runSharkEngine(info, shark98260, ksud)
                         else runC98260Engine(info, ksud, extraArgs, recordOutcome)
-                    engineId == ENGINE_CVE_98260_SELINUX -> runC98260SelinuxEngine(info)
                     // 64560: the fingerprint-pinned build, then the family build, then the port.
                     engineId == ENGINE_CVE_64560 -> when {
                         joker -> runJokerEngine(info, ksud)
@@ -1924,6 +1912,9 @@ class MainActivity : AppCompatActivity() {
      * CVE-2026-98260: the payload calibrates its own KASLR slide and page_offset, so the runner
      * only stages files and reads the outcome. Its profile is the 98260 snapshot parsed from the
      * same boot.img; without one the payload's built-in 6.1.134 / 6.6.118 table applies.
+     *
+     * The sheet's modes all end up here; `--selinux-only` is the one whose verdict is not a root
+     * handoff, so it gets its own return instead of the generic "finished" line.
      */
     private fun runC98260Engine(
         info: DeviceInfo,
@@ -1931,6 +1922,9 @@ class MainActivity : AppCompatActivity() {
         extraArgs: List<String>,
         recordOutcome: Boolean,
     ): String {
+        // Same payload stopped before the cred rewrite: no bootstrap, no handoff, and no reason to
+        // stage a ksud copy on the device.
+        val selinuxOnly = extraArgs.contains("--selinux-only")
         // One-shot: a snapshot chosen in the sheet applies to this run only.
         val picked = c98260ProfileOverride
         c98260ProfileOverride = null
@@ -1951,12 +1945,13 @@ class MainActivity : AppCompatActivity() {
             manager = AdbConnectionManager.get(this),
             release = info.kernel,
             profile = profile,
-            suManager = ksud,
+            suManager = if (selinuxOnly) null else ksud,
             onLine = ::logLine,
             onProgress = ::reportProgress,
             // A slide from the KASLR card skips calibration A; a null one lets the payload
             // measure it again, which is what it did before the card existed.
             slide = kaslrSlide.value,
+            selinuxOnly = selinuxOnly,
             extraArgs = extraArgs,
         )
         if (recordOutcome) {
@@ -1964,42 +1959,21 @@ class MainActivity : AppCompatActivity() {
                 this, info.kernel, result.handoff.rooted, ExploitMemory.ENGINE_C98260,
             )
         }
+        // "SELinux is permissive" and "write executed, enforce not read back" are the verdict; the
+        // generic "finished" line would erase the difference between the two.
+        if (selinuxOnly) {
+            return if (result.exitCode == 0) {
+                result.handoff.detail
+            } else {
+                getString(R.string.exploit_exit_code, result.exitCode)
+            }
+        }
         return reportHandoff(ksud, result.handoff, result.exitCode)
     }
 
     /** `0x…`, or `unset` for the zero that means "this profile does not carry the symbol". */
     private fun hexOrUnset(value: Long): String =
         if (value == 0L) "unset" else "0x" + java.lang.Long.toHexString(value)
-
-    /**
-     * CVE-2026-98260, short path: same payload with `--selinux-only`. It stops as soon as
-     * `selinux_enforcing` reads back 0 — before the cred rewrite — so nothing is staged as a
-     * bootstrap and there is no root handoff to probe. The returned line says whether the
-     * permissive state was actually confirmed or only written blind.
-     */
-    private fun runC98260SelinuxEngine(info: DeviceInfo): String {
-        val profile = ProfileStore.loadC98260(this, info.kernel)?.let(Cve98260Profile::parse)
-        if (profile == null) {
-            logLine("<i> no parsed profile for ${info.kernel}; the built-in table is used")
-        }
-        val result = Cve98260Runner.run(
-            context = this,
-            manager = AdbConnectionManager.get(this),
-            release = info.kernel,
-            profile = profile,
-            // No manager to launch, no ksud to stage: this run never reaches root.
-            suManager = null,
-            onLine = ::logLine,
-            onProgress = ::reportProgress,
-            slide = kaslrSlide.value,
-            selinuxOnly = true,
-        )
-        return if (result.exitCode == 0) {
-            result.handoff.detail
-        } else {
-            getString(R.string.exploit_exit_code, result.exitCode)
-        }
-    }
 
     /**
      * CVE-2025-21479: the payload runs as `shell` over the ADB channel and re-execs the staged
