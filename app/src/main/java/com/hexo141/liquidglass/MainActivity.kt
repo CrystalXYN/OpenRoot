@@ -144,6 +144,12 @@ class MainActivity : AppCompatActivity() {
         /** How long to wait for `_adb-tls-connect._tcp` before giving up on a direct connect. */
         const val CONNECT_TIMEOUT_MS = 6_000L
 
+        /**
+         * How long the force-stop button may read "Stopping…" before the log stream is cut locally
+         * regardless of what the device answered. The remote kill keeps running in the background.
+         */
+        const val FORCE_STOP_GRACE_MS = 4_000L
+
         /** Give adbd a moment to publish the connect service after the pairing handshake. */
         const val CONNECT_AFTER_PAIR_DELAY_MS = 700L
 
@@ -190,6 +196,12 @@ class MainActivity : AppCompatActivity() {
 
     /** A force stop is in flight: the log page shows "stopping" and ignores further taps. */
     private val forceStopping = mutableStateOf(false)
+
+    /**
+     * Bumped on every force stop so a timer left over from an earlier one cannot release the
+     * button of a run that started (and was stopped) in the meantime.
+     */
+    private var forceStopToken = 0
 
     /**
      * Set by [forceStopExploit] and read when the worker finishes, so the stream's teardown
@@ -1747,6 +1759,24 @@ class MainActivity : AppCompatActivity() {
         forceStopped = true
         ExploitStop.requestStop()
         logLine("<i> 强行停止：正在结束设备上的载荷进程")
+
+        // The deadline starts here, not after the remote kill returns.
+        //
+        // `killPayloads` runs a shell command on a second channel while the payload still owns its
+        // pty. That channel can take as long as the daemon wants - and if it never answers, the
+        // old code never reached its cleanup, so the button stayed on "Stopping…" until the app was
+        // restarted. Nothing about stopping needs to wait for the device: the payload is already
+        // marked stopped, so cut the local stream and release the UI on a timer, and let the kill
+        // finish in the background.
+        // Nothing about stopping needs to wait for the device: the payload is already marked
+        // stopped, so cut the local stream and release the UI on a timer, and let the kill finish
+        // in the background. The token keeps a stale timer from releasing a later run's button.
+        val token = ++forceStopToken
+        refreshHandler.postDelayed(
+            { if (token == forceStopToken) finishForceStop() },
+            FORCE_STOP_GRACE_MS,
+        )
+
         Thread({
             val killed = runCatching { ExploitStop.killPayloads(AdbConnectionManager.get(this)) }
                 .getOrElse { error ->
@@ -1762,19 +1792,27 @@ class MainActivity : AppCompatActivity() {
                         else -> "<i> 结束载荷失败，已断开日志流；设备上的进程可能仍在运行"
                     }
                 )
-                // A transport that ignores the local close can leave the worker blocked on read.
-                // The payload is already dead, so free the page instead of showing "stopping"
-                // until the idle timeout; the orphan thread exits on its own.
-                refreshHandler.postDelayed({
-                    if (forceStopping.value && exploiting.value) {
-                        forceStopping.value = false
-                        exploiting.value = false
-                        exploitProgress.value = 1f
-                        exploitStatus.value = getString(R.string.log_force_stopped)
-                    }
-                }, 5_000)
+                // No-op when the timed release already ran; this is the fast path.
+                if (token == forceStopToken) finishForceStop()
             }
         }, "exploit-force-stop").start()
+    }
+
+    /**
+     * Cuts the log stream and puts the button back, exactly once.
+     *
+     * Called from the grace timer and from the kill thread, whichever comes first: the worker only
+     * clears these flags when it returns, and a payload parked on a closed channel may never.
+     */
+    private fun finishForceStop() {
+        if (!forceStopping.value) return
+        forceStopping.value = false
+        exploiting.value = false
+        exploitProgress.value = 1f
+        exploitStatus.value = getString(R.string.log_force_stopped)
+        // Closing the stream writes a CLOSE packet; keep that off the main thread so a busy
+        // transport cannot freeze the frame that just released the button.
+        Thread({ AdbShell.cancelActiveStream() }, "exploit-stop-cut").start()
     }
 
     /**
